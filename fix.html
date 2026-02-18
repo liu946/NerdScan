@@ -117,7 +117,6 @@
             width: 100%;
             height: 200px;
             margin-bottom: 8px;
-            /* 关键：确保旋转容器有足够空间，防止图片溢出 */
             overflow: visible;
         }
 
@@ -125,7 +124,6 @@
             width: 100%;
             height: 100%;
             transition: transform 0.3s ease-out;
-            /* 初始化：不旋转 */
             transform: rotate(0deg);
         }
 
@@ -136,7 +134,6 @@
             border-radius: 4px;
         }
 
-        /* 旋转角度显示样式 - 右下角 */
         .rotation-degree {
             position: absolute;
             bottom: 4px;
@@ -147,7 +144,7 @@
             padding: 2px 6px;
             border-radius: 4px;
             font-weight: bold;
-            pointer-events: none; /* 防止遮挡点击 */
+            pointer-events: none;
             z-index: 10;
         }
 
@@ -328,10 +325,9 @@
         <div class="upload-area">
             <h2>图片EXIF批量处理工具（暗色模式）</h2>
             <br>
-            <!-- 按钮组：选择文件夹 + 排序按钮 -->
             <div class="upload-btn-group">
                 <button class="upload-btn" onclick="document.getElementById('folder-input').click()">选择图片文件夹</button>
-                <button class="sort-btn" onclick="sortImagesByTime()" id="sort-btn" disabled>按文件时间重新排序</button>
+                <button class="sort-btn" onclick="sortImagesBySelectedTime()" id="sort-btn" disabled>按选择的时间重新排序</button>
             </div>
             <input type="file" id="folder-input" webkitdirectory directory multiple hidden accept="image/*">
             <p>提示：仅支持本地图片文件（JPG/PNG/WebP等），所有操作均在本地完成，不会上传文件</p>
@@ -357,14 +353,14 @@
     <script>
         let imageFiles = [];
         let selectedFolderPath = '';
-        const TIMEZONE_OFFSET = 8 * 60 * 60 * 1000;
+        // 移除时区偏移常量，不再使用
         const imageGrid = document.getElementById('image-grid');
         const folderInput = document.getElementById('folder-input');
         const folderPathEl = document.getElementById('folder-path');
         const pathTextEl = document.getElementById('path-text');
         const sortBtn = document.getElementById('sort-btn');
 
-        // EXIF Orientation到旋转角度的映射（仅用于显示和指令计算）
+        // EXIF Orientation到旋转角度的映射
         const EXIF_ORIENT_TO_DEG = {
             1: 0,    // 正常
             2: 0,    // 水平翻转
@@ -388,7 +384,7 @@
 
         function handleFolderSelect(e) {
             const files = Array.from(e.target.files);
-            // 1. 初始按文件名排序
+            // 初始按文件名中文排序
             const imageFilesFiltered = files.filter(file => file.type.startsWith('image/'))
                                            .sort((a, b) => a.name.localeCompare(b.name, 'zh-CN'));
 
@@ -417,20 +413,37 @@
             setTimeout(initSortable, 500);
         }
 
-        // 按文件时间排序（优先使用lastModified，次选name）
-        function sortImagesByTime() {
+        // 工具函数：将EXIF的DateTimeOriginal格式转换为datetime-local格式
+        function exifDateToLocalFormat(exifDateStr) {
+            if (!exifDateStr) return getLocalTimeISOString();
+
+            // EXIF DateTimeOriginal格式："2024:12:31 23:59:59"
+            try {
+                const [datePart, timePart] = exifDateStr.split(' ');
+                const [year, month, day] = datePart.split(':');
+                const [hour, minute] = timePart.split(':');
+                return `${year}-${month}-${day}T${hour}:${minute}`;
+            } catch (e) {
+                // 解析失败则使用当前本地时间
+                return getLocalTimeISOString();
+            }
+        }
+
+        // 按图片选择的时间排序（完全保留所有状态）
+        function sortImagesBySelectedTime() {
             if (imageFiles.length === 0) {
                 alert('暂无图片可排序！');
                 return;
             }
 
-            // 按文件修改时间排序
+            // 直接基于imageFiles中的selectedTime排序，不依赖DOM
             imageFiles.sort((a, b) => {
-                // a.file.lastModified 是文件的修改时间戳
-                return a.file.lastModified - b.file.lastModified;
+                const timeA = a.selectedTime ? getDateFromInput(a.selectedTime).getTime() : new Date().getTime();
+                const timeB = b.selectedTime ? getDateFromInput(b.selectedTime).getTime() : new Date().getTime();
+                return timeA - timeB;
             });
 
-            // 重新渲染图片
+            // 重新渲染所有图片（从imageFiles读取所有状态）
             imageGrid.innerHTML = '';
             imageFiles.forEach((imgData, index) => {
                 renderSingleImage(imgData, index);
@@ -439,7 +452,7 @@
             // 重新初始化拖动排序
             setTimeout(initSortable, 100);
 
-            alert('已按文件修改时间重新排序图片！');
+            alert('已按选择的时间重新排序图片！所有设置的时间和旋转状态均已保留');
         }
 
         function processSingleImage(file, index) {
@@ -448,29 +461,40 @@
             reader.onload = function(e) {
                 const img = new Image();
                 img.onload = function() {
-                    // 读取EXIF原始旋转角度（仅用于显示数值，不旋转图片）
+                    // 读取EXIF原始旋转角度
                     let originalRotation = 0;
+                    // 读取EXIF原始拍摄时间
+                    let exifDateTimeOriginal = '';
+
                     try {
                         EXIF.getData(img, function() {
+                            // 读取旋转角度
                             const exifOrientation = EXIF.getTag(this, 'Orientation') || 1;
                             originalRotation = EXIF_ORIENT_TO_DEG[exifOrientation] || 0;
+
+                            // 读取DateTimeOriginal（原始拍摄时间）
+                            exifDateTimeOriginal = EXIF.getTag(this, 'DateTimeOriginal') || '';
                         });
                     } catch (err) {
                         originalRotation = 0;
-                        console.log(`图片${file.name}读取EXIF失败，使用默认0°`, err);
+                        console.log(`图片${file.name}读取EXIF失败，使用默认值`, err);
                     }
 
-                    // 存储图片数据
+                    // 转换为datetime-local格式
+                    const initSelectedTime = exifDateToLocalFormat(exifDateTimeOriginal);
+
+                    // 存储图片数据（包含所有状态：旋转、选择的时间）
                     const imgData = {
                         file: file,
-                        originalRotation: originalRotation, // EXIF原始角度（仅显示）
-                        userRotation: 0, // 用户操作的旋转角度（初始0）
-                        totalRotation: originalRotation, // 总角度（初始=原始角度）
-                        src: e.target.result
+                        originalRotation: originalRotation,
+                        userRotation: 0, // 用户操作的旋转角度
+                        totalRotation: originalRotation,
+                        src: e.target.result,
+                        selectedTime: initSelectedTime // 存储用户选择的时间（初始为EXIF时间）
                     };
                     imageFiles.push(imgData);
 
-                    // 渲染单张图片：仅显示数值，不旋转图片
+                    // 渲染单张图片
                     renderSingleImage(imgData, imageFiles.length - 1);
                 };
 
@@ -497,27 +521,28 @@
 
             // 存储旋转数据
             imageItem.dataset.originalRotation = imgData.originalRotation;
-            imageItem.dataset.userRotation = 0; // 用户操作角度初始0
-            imageItem.dataset.totalRotation = imgData.totalRotation;
+            imageItem.dataset.userRotation = imgData.userRotation || 0;
+            imageItem.dataset.totalRotation = imgData.totalRotation || imgData.originalRotation;
 
-            // 图片容器（用于定位角度显示元素）
+            // 图片容器
             const imageWrapper = document.createElement('div');
             imageWrapper.className = 'image-wrapper';
 
-            // 图片内层容器（专门用于旋转，解决旋转溢出问题）
+            // 图片内层容器（用于旋转）
             const imageInner = document.createElement('div');
             imageInner.className = 'image-inner';
-            imageInner.dataset.innerEl = 'true';
+            // 渲染时还原用户已操作的旋转角度
+            imageInner.style.transform = `rotate(${imgData.userRotation || 0}deg)`;
 
             // 创建图片元素
             const img = document.createElement('img');
             img.src = imgData.src;
             imageInner.appendChild(img);
 
-            // 旋转角度显示元素（右下角）：初始值=EXIF原始角度
+            // 旋转角度显示元素
             const rotationDegree = document.createElement('div');
             rotationDegree.className = 'rotation-degree';
-            rotationDegree.textContent = `${imgData.totalRotation}°`;
+            rotationDegree.textContent = `${imgData.totalRotation || imgData.originalRotation}°`;
 
             // 组装图片容器
             imageWrapper.appendChild(imageInner);
@@ -526,6 +551,7 @@
             const controls = document.createElement('div');
             controls.className = 'image-controls';
 
+            // 旋转按钮
             const rotateBtnContainer = document.createElement('div');
             rotateBtnContainer.className = 'rotate-buttons';
 
@@ -550,14 +576,25 @@
             rotateBtnContainer.appendChild(clockwiseBtn);
             rotateBtnContainer.appendChild(counterclockwiseBtn);
 
+            // 日期选择控件
             const dateContainer = document.createElement('div');
             dateContainer.className = 'date-controls';
 
             const dateInput = document.createElement('input');
             dateInput.type = 'datetime-local';
             dateInput.className = 'date-input';
-            dateInput.value = getChinaTimeISOString();
+            // 使用imgData中的selectedTime初始化（来自EXIF或用户已设置的时间）
+            dateInput.value = imgData.selectedTime;
 
+            // 监听时间变化，同步更新imgData中的selectedTime
+            dateInput.addEventListener('change', function() {
+                const currentIndex = parseInt(this.closest('.image-item').dataset.index);
+                if (imageFiles[currentIndex]) {
+                    imageFiles[currentIndex].selectedTime = this.value;
+                }
+            });
+
+            // 时间快捷按钮
             const timeBtnContainer = document.createElement('div');
             timeBtnContainer.className = 'time-buttons';
 
@@ -611,17 +648,16 @@
             imageGrid.appendChild(imageItem);
         }
 
-        function getChinaTimeISOString() {
+        // 修改：获取本地时间的ISO字符串，不再加时区偏移
+        function getLocalTimeISOString() {
             const now = new Date();
-            const chinaTime = new Date(now.getTime() + TIMEZONE_OFFSET - now.getTimezoneOffset() * 60 * 1000);
-            return chinaTime.toISOString().slice(0, 16);
+            return now.toISOString().slice(0, 16);
         }
 
-        function getChinaDateFromInput(value) {
+        // 修改：直接从输入值获取Date对象，不再做时区偏移调整
+        function getDateFromInput(value) {
             if (!value) return new Date();
-            const localDate = new Date(value + ':00');
-            const chinaDate = new Date(localDate.getTime() - localDate.getTimezoneOffset() * 60 * 1000);
-            return chinaDate;
+            return new Date(value + ':00');
         }
 
         function initSortable() {
@@ -643,37 +679,34 @@
             });
         }
 
-        // 核心修复：点击旋转按钮时，同时旋转图片 + 更新角度数值
+        // 旋转图片+更新数值
         function rotateImageAndUpdateDegree(container, imageInner, direction) {
-            // 获取当前数据
             const originalRot = parseInt(container.dataset.originalRotation);
             let userRot = parseInt(container.dataset.userRotation);
             let totalRot = parseInt(container.dataset.totalRotation);
 
-            // 计算用户操作后的角度
             if (direction === 'clockwise') {
-                userRot = (userRot + 90) % 360; // 用户操作角度+90°
-                totalRot = (originalRot + userRot) % 360; // 总角度更新
+                userRot = (userRot + 90) % 360;
+                totalRot = (originalRot + userRot) % 360;
             } else if (direction === 'counterclockwise') {
-                userRot = (userRot - 90 + 360) % 360; // 用户操作角度-90°
-                totalRot = (originalRot + userRot) % 360; // 总角度更新
+                userRot = (userRot - 90 + 360) % 360;
+                totalRot = (originalRot + userRot) % 360;
             }
 
-            // 1. 核心修复：旋转内层容器（确保图片视觉上旋转）
-            // 移除!important限制，直接设置transform
+            // 旋转内层容器
             imageInner.style.transform = `rotate(${userRot}deg)`;
 
-            // 2. 更新数值显示
+            // 更新数值显示
             const degreeEl = container.querySelector('.rotation-degree');
             if (degreeEl) {
                 degreeEl.textContent = `${totalRot}°`;
             }
 
-            // 3. 更新数据属性
+            // 更新数据属性
             container.dataset.userRotation = userRot;
             container.dataset.totalRotation = totalRot;
 
-            // 4. 同步更新imageFiles中的数据
+            // 同步更新imageFiles
             const index = parseInt(container.dataset.index);
             if (imageFiles[index]) {
                 imageFiles[index].userRotation = userRot;
@@ -686,12 +719,16 @@
                 alert('这是第一张图片，没有前一个时间！');
                 return;
             }
-            const prevItem = document.querySelector(`.image-item[data-index="${currentIndex - 1}"]`);
+
+            const prevData = imageFiles[currentIndex - 1];
+            const currentData = imageFiles[currentIndex];
+
+            if (!prevData || !currentData) return;
+
+            // 同步更新imgData和DOM
+            currentData.selectedTime = prevData.selectedTime;
             const currentItem = document.querySelector(`.image-item[data-index="${currentIndex}"]`);
-            if (prevItem && currentItem) {
-                const prevDate = prevItem.querySelector('.date-input').value;
-                currentItem.querySelector('.date-input').value = prevDate;
-            }
+            currentItem.querySelector('.date-input').value = prevData.selectedTime;
         }
 
         function addTimeFromPrev(currentIndex, unit) {
@@ -699,14 +736,14 @@
                 alert('这是第一张图片，没有前一个时间！');
                 return;
             }
-            const prevItem = document.querySelector(`.image-item[data-index="${currentIndex - 1}"]`);
-            const currentItem = document.querySelector(`.image-item[data-index="${currentIndex}"]`);
-            if (!prevItem || !currentItem) return;
 
-            const prevDateValue = prevItem.querySelector('.date-input').value;
-            if (!prevDateValue) return;
+            const prevData = imageFiles[currentIndex - 1];
+            const currentData = imageFiles[currentIndex];
 
-            const prevDate = getChinaDateFromInput(prevDateValue);
+            if (!prevData || !currentData || !prevData.selectedTime) return;
+
+            // 修改：直接使用选择框时间，不做时区偏移
+            const prevDate = getDateFromInput(prevData.selectedTime);
             const newDate = new Date(prevDate);
 
             switch(unit) {
@@ -722,6 +759,10 @@
             }
 
             const newDateStr = newDate.toISOString().slice(0, 16);
+
+            // 同步更新imgData和DOM
+            currentData.selectedTime = newDateStr;
+            const currentItem = document.querySelector(`.image-item[data-index="${currentIndex}"]`);
             currentItem.querySelector('.date-input').value = newDateStr;
         }
 
@@ -732,7 +773,7 @@
             }
 
             let commands = [];
-            commands.push('# EXIFTool 批量处理指令（+8时区）');
+            commands.push('# EXIFTool 批量处理指令（使用选择框原始时间）');
             commands.push('# 使用说明：将指令复制到终端执行，需确保已安装exiftool');
             commands.push('# 注意：替换 {你的图片文件夹绝对路径} 为实际路径（建议使用绝对路径）');
             commands.push('# -overwrite_original：原地替换原图片，不生成备份文件');
@@ -748,17 +789,21 @@
                 if (!imgData) return;
 
                 const file = imgData.file;
-                // 最终需要设置的旋转角度 = 总角度（原始+用户操作）
                 const finalRot = imgData.totalRotation % 360;
                 const orientStr = DEG_TO_ORIENT_STR[finalRot] || 'Rotate 0';
 
-                const date = item.querySelector('.date-input').value;
-                const chinaDate = getChinaDateFromInput(date);
-                const exifDate = `${chinaDate.getFullYear()}-${String(chinaDate.getMonth()+1).padStart(2, '0')}-${String(chinaDate.getDate()).padStart(2, '0')} ${String(chinaDate.getHours()).padStart(2, '0')}:${String(chinaDate.getMinutes()).padStart(2, '0')}:${String(chinaDate.getSeconds()).padStart(2, '0')}`;
+                // 核心修改：直接使用选择框的原始时间，不做时区偏移
+                const date = imgData.selectedTime;
+                if (!date) return;
+
+                // 解析选择框时间为Date对象（无时区偏移）
+                const selectedDate = getDateFromInput(date);
+                // 生成EXIF指令所需的时间格式，直接使用选择框时间
+                const exifDate = `${selectedDate.getFullYear()}-${String(selectedDate.getMonth()+1).padStart(2, '0')}-${String(selectedDate.getDate()).padStart(2, '0')} ${String(selectedDate.getHours()).padStart(2, '0')}:${String(selectedDate.getMinutes()).padStart(2, '0')}:${String(selectedDate.getSeconds()).padStart(2, '0')}`;
 
                 const filename = file.name.replace(/'/g, "\\'");
-                // 保留Orientation字符串 + 原地替换
-                const cmd = `exiftool -Orientation="${orientStr}" -DateTimeOriginal='${exifDate}' -CreateDate='${exifDate}' -ModifyDate='${exifDate}' -OffsetTimeOriginal='+08:00' -overwrite_original '${filename}'`;
+                // 移除OffsetTimeOriginal，仅保留选择框时间
+                const cmd = `exiftool -Orientation="${orientStr}" -DateTimeOriginal='${exifDate}' -CreateDate='${exifDate}' -ModifyDate='${exifDate}' -overwrite_original '${filename}'`;
                 commands.push(cmd);
             });
 
