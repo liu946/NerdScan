@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>图片EXIF批量处理工具</title>
+    <title>图片EXIF批量处理工具（暗色模式）</title>
     <script src="https://cdn.jsdelivr.net/npm/sortablejs@1.15.0/Sortable.min.js"></script>
     <style>
         * {
@@ -13,9 +13,11 @@
             font-family: Arial, sans-serif;
         }
 
+        /* 1. 全局暗色背景 */
         body {
             padding: 20px;
-            background-color: #f5f5f5;
+            background-color: #1a1a1a; /* 深灰背景，护眼 */
+            color: #e0e0e0; /* 浅灰文字 */
         }
 
         .container {
@@ -23,12 +25,14 @@
             margin: 0 auto;
         }
 
+        /* 上传区域暗色样式 */
         .upload-area {
-            background: white;
+            background: #2d2d2d;
             padding: 30px;
             border-radius: 8px;
-            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+            box-shadow: 0 2px 10px rgba(0,0,0,0.5);
             margin-bottom: 20px;
+            border: 1px solid #444;
         }
 
         .upload-btn {
@@ -40,45 +44,54 @@
             cursor: pointer;
             font-size: 16px;
             margin-bottom: 10px;
+            transition: background 0.2s;
         }
 
         .upload-btn:hover {
             background: #1976D2;
         }
 
+        /* 恢复路径展示样式 */
         .folder-path {
             margin-top: 10px;
             padding: 8px;
-            background: #f8f9fa;
+            background: #333;
             border-radius: 4px;
             font-family: monospace;
             font-size: 14px;
-            color: #333;
+            color: #e0e0e0;
             word-break: break-all;
         }
 
+        /* 2. 缩小照片间距：gap从20px改为8px */
         .image-grid {
             display: grid;
             grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
-            gap: 20px;
-            background: white;
+            gap: 8px; /* 照片框间距缩小 */
+            background: #2d2d2d;
             padding: 20px;
             border-radius: 8px;
-            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+            box-shadow: 0 2px 10px rgba(0,0,0,0.5);
             margin-bottom: 20px;
+            border: 1px solid #444;
         }
 
         .image-item {
             position: relative;
-            border: 2px solid #eee;
+            border: 2px solid #444;
             border-radius: 8px;
             overflow: hidden;
             cursor: grab;
             display: flex;
             flex-direction: column;
             align-items: center;
-            padding: 10px;
-            background: #fff;
+            padding: 8px;
+            background: #333;
+            transition: border 0.2s;
+        }
+
+        .image-item:hover {
+            border-color: #2196F3;
         }
 
         .image-item img {
@@ -87,29 +100,50 @@
             object-fit: cover;
             transition: transform 0.3s ease;
             border-radius: 4px;
-            margin-bottom: 10px;
+            margin-bottom: 8px;
         }
 
         .image-controls {
             width: 100%;
             display: flex;
             flex-direction: column;
-            gap: 8px;
+            gap: 6px;
         }
 
-        .rotate-btn {
-            background: #FF9800;
-            color: white;
-            border: none;
-            border-radius: 4px;
-            padding: 6px 0;
-            cursor: pointer;
-            font-size: 14px;
+        /* 旋转按钮容器：横向排列，图标化 */
+        .rotate-buttons {
+            display: flex;
+            gap: 4px;
             width: 100%;
         }
 
-        .rotate-btn:hover {
+        /* 3. 旋转按钮仅显示图标，去掉文字 */
+        .rotate-btn {
+            flex: 1;
+            background: #444;
+            color: white;
+            border: none;
+            border-radius: 4px;
+            padding: 8px 0;
+            cursor: pointer;
+            font-size: 18px; /* 图标字号放大 */
+            transition: background 0.2s;
+        }
+
+        .rotate-btn.clockwise {
+            background: #FF9800;
+        }
+
+        .rotate-btn.clockwise:hover {
             background: #F57C00;
+        }
+
+        .rotate-btn.counterclockwise {
+            background: #F44336;
+        }
+
+        .rotate-btn.counterclockwise:hover {
+            background: #D32F2F;
         }
 
         .date-controls {
@@ -123,8 +157,15 @@
             width: 100%;
             font-size: 14px;
             padding: 6px;
-            border: 1px solid #ddd;
+            border: 1px solid #555;
             border-radius: 4px;
+            background: #333;
+            color: #e0e0e0;
+            outline: none;
+        }
+
+        .date-input:focus {
+            border-color: #2196F3;
         }
 
         .time-buttons {
@@ -141,6 +182,7 @@
             cursor: pointer;
             font-size: 12px;
             color: white;
+            transition: opacity 0.2s;
         }
 
         .equal-btn { background: #607D8B; }
@@ -152,11 +194,13 @@
             opacity: 0.9;
         }
 
+        /* 指令区域暗色样式 */
         .exif-commands {
-            background: white;
+            background: #2d2d2d;
             padding: 20px;
             border-radius: 8px;
-            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+            box-shadow: 0 2px 10px rgba(0,0,0,0.5);
+            border: 1px solid #444;
         }
 
         .commands-header {
@@ -173,6 +217,7 @@
             border: none;
             border-radius: 4px;
             cursor: pointer;
+            transition: background 0.2s;
         }
 
         .generate-btn:hover {
@@ -186,6 +231,7 @@
             border: none;
             border-radius: 4px;
             cursor: pointer;
+            transition: background 0.2s;
         }
 
         .copy-btn:hover {
@@ -196,11 +242,18 @@
             width: 100%;
             height: 200px;
             padding: 10px;
-            border: 1px solid #ddd;
+            border: 1px solid #555;
             border-radius: 4px;
             font-family: monospace;
             font-size: 14px;
             resize: vertical;
+            background: #333;
+            color: #e0e0e0;
+            outline: none;
+        }
+
+        .commands-text:focus {
+            border-color: #2196F3;
         }
 
         .empty-state {
@@ -213,6 +266,7 @@
         @media (max-width: 768px) {
             .image-grid {
                 grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+                gap: 6px; /* 移动端间距更小 */
             }
             .image-item img {
                 height: 150px;
@@ -224,11 +278,12 @@
     <div class="container">
         <!-- 文件夹选择区域 -->
         <div class="upload-area">
-            <h2>图片EXIF批量处理工具</h2>
+            <h2>图片EXIF批量处理工具（暗色模式）</h2>
             <br>
             <button class="upload-btn" onclick="document.getElementById('folder-input').click()">选择图片文件夹</button>
             <input type="file" id="folder-input" webkitdirectory directory multiple hidden accept="image/*">
             <p>提示：仅支持本地图片文件（JPG/PNG/WebP等），所有操作均在本地完成，不会上传文件</p>
+            <!-- 恢复原有路径展示样式 -->
             <div class="folder-path" id="folder-path" style="display: none;">所选文件夹：<span id="path-text"></span></div>
         </div>
 
@@ -281,7 +336,7 @@
                 return;
             }
 
-            // 提取文件夹路径
+            // 提取文件夹路径（恢复原有逻辑）
             if (imageFilesFiltered[0].webkitRelativePath) {
                 const fullRelativePath = imageFilesFiltered[0].webkitRelativePath;
                 selectedFolderPath = fullRelativePath.substring(0, fullRelativePath.lastIndexOf('/'));
@@ -303,7 +358,6 @@
         // 工具函数：获取+8时区的当前时间（修正时区偏移）
         function getChinaTimeISOString() {
             const now = new Date();
-            // 计算UTC时间 + 8小时 = 中国标准时间
             const chinaTime = new Date(now.getTime() + TIMEZONE_OFFSET - now.getTimezoneOffset() * 60 * 1000);
             return chinaTime.toISOString().slice(0, 16);
         }
@@ -311,9 +365,7 @@
         // 工具函数：将datetime-local值转为+8时区的Date对象
         function getChinaDateFromInput(value) {
             if (!value) return new Date();
-            // 解析输入值，修正时区偏移
             const localDate = new Date(value + ':00');
-            // 转换为+8时区的时间
             const chinaDate = new Date(localDate.getTime() - localDate.getTimezoneOffset() * 60 * 1000);
             return chinaDate;
         }
@@ -340,14 +392,33 @@
                 const controls = document.createElement('div');
                 controls.className = 'image-controls';
 
-                // 旋转按钮
-                const rotateBtn = document.createElement('button');
-                rotateBtn.className = 'rotate-btn';
-                rotateBtn.textContent = '旋转90°';
-                rotateBtn.onclick = (e) => {
+                // 旋转按钮容器（横向排列）
+                const rotateBtnContainer = document.createElement('div');
+                rotateBtnContainer.className = 'rotate-buttons';
+
+                // 顺时针旋转按钮（仅图标 ↻）
+                const clockwiseBtn = document.createElement('button');
+                clockwiseBtn.className = 'rotate-btn clockwise';
+                clockwiseBtn.textContent = '↻'; // 顺时针图标
+                clockwiseBtn.title = '顺时针旋转90°'; // 鼠标悬浮提示
+                clockwiseBtn.onclick = (e) => {
                     e.stopPropagation();
-                    rotateImage(imageItem, img);
+                    rotateImage(imageItem, img, 'clockwise');
                 };
+
+                // 逆时针旋转按钮（仅图标 ↺）
+                const counterclockwiseBtn = document.createElement('button');
+                counterclockwiseBtn.className = 'rotate-btn counterclockwise';
+                counterclockwiseBtn.textContent = '↺'; // 逆时针图标
+                counterclockwiseBtn.title = '逆时针旋转90°'; // 鼠标悬浮提示
+                counterclockwiseBtn.onclick = (e) => {
+                    e.stopPropagation();
+                    rotateImage(imageItem, img, 'counterclockwise');
+                };
+
+                // 组装旋转按钮
+                rotateBtnContainer.appendChild(clockwiseBtn);
+                rotateBtnContainer.appendChild(counterclockwiseBtn);
 
                 // 日期操作容器（输入框+快捷按钮）
                 const dateContainer = document.createElement('div');
@@ -357,7 +428,7 @@
                 const dateInput = document.createElement('input');
                 dateInput.type = 'datetime-local';
                 dateInput.className = 'date-input';
-                dateInput.value = getChinaTimeISOString(); // 修正默认值时区
+                dateInput.value = getChinaTimeISOString();
 
                 // 快捷按钮容器（单独一行）
                 const timeBtnContainer = document.createElement('div');
@@ -367,6 +438,7 @@
                 const equalBtn = document.createElement('button');
                 equalBtn.className = 'time-btn equal-btn';
                 equalBtn.textContent = '=';
+                equalBtn.title = '等于前一张图片的时间';
                 equalBtn.onclick = function() {
                     const currentIndex = parseInt(this.closest('.image-item').dataset.index);
                     setEqualPrevTime(currentIndex);
@@ -376,6 +448,7 @@
                 const minBtn = document.createElement('button');
                 minBtn.className = 'time-btn min-btn';
                 minBtn.textContent = '+1min';
+                minBtn.title = '前一张图片时间+1分钟';
                 minBtn.onclick = function() {
                     const currentIndex = parseInt(this.closest('.image-item').dataset.index);
                     addTimeFromPrev(currentIndex, 'minute');
@@ -385,6 +458,7 @@
                 const dayBtn = document.createElement('button');
                 dayBtn.className = 'time-btn day-btn';
                 dayBtn.textContent = '+1d';
+                dayBtn.title = '前一张图片时间+1天';
                 dayBtn.onclick = function() {
                     const currentIndex = parseInt(this.closest('.image-item').dataset.index);
                     addTimeFromPrev(currentIndex, 'day');
@@ -394,6 +468,7 @@
                 const monthBtn = document.createElement('button');
                 monthBtn.className = 'time-btn month-btn';
                 monthBtn.textContent = '+1m';
+                monthBtn.title = '前一张图片时间+1个月';
                 monthBtn.onclick = function() {
                     const currentIndex = parseInt(this.closest('.image-item').dataset.index);
                     addTimeFromPrev(currentIndex, 'month');
@@ -406,7 +481,7 @@
                 timeBtnContainer.appendChild(monthBtn);
                 dateContainer.appendChild(dateInput);
                 dateContainer.appendChild(timeBtnContainer);
-                controls.appendChild(rotateBtn);
+                controls.appendChild(rotateBtnContainer); // 旋转按钮容器
                 controls.appendChild(dateContainer);
                 imageItem.appendChild(img);
                 imageItem.appendChild(controls);
@@ -435,10 +510,15 @@
             });
         }
 
-        // 旋转图片
-        function rotateImage(container, img) {
-            let rotation = parseInt(container.dataset.rotation) + 90;
-            rotation = rotation % 360;
+        // 旋转图片：支持顺时针/逆时针
+        function rotateImage(container, img, direction) {
+            let rotation = parseInt(container.dataset.rotation);
+            // 根据方向调整角度
+            if (direction === 'clockwise') {
+                rotation = (rotation + 90) % 360; // 顺时针+90°
+            } else if (direction === 'counterclockwise') {
+                rotation = (rotation - 90 + 360) % 360; // 逆时针-90°（+360避免负数）
+            }
             container.dataset.rotation = rotation;
             img.style.transform = `rotate(${rotation}deg)`;
         }
@@ -449,7 +529,6 @@
                 alert('这是第一张图片，没有前一个时间！');
                 return;
             }
-            // 获取前一个和当前图片元素
             const prevItem = document.querySelector(`.image-item[data-index="${currentIndex - 1}"]`);
             const currentItem = document.querySelector(`.image-item[data-index="${currentIndex}"]`);
             if (prevItem && currentItem) {
@@ -464,7 +543,6 @@
                 alert('这是第一张图片，没有前一个时间！');
                 return;
             }
-            // 获取前一个和当前图片元素
             const prevItem = document.querySelector(`.image-item[data-index="${currentIndex - 1}"]`);
             const currentItem = document.querySelector(`.image-item[data-index="${currentIndex}"]`);
             if (!prevItem || !currentItem) return;
@@ -472,11 +550,9 @@
             const prevDateValue = prevItem.querySelector('.date-input').value;
             if (!prevDateValue) return;
 
-            // 基于+8时区解析前一个时间
             const prevDate = getChinaDateFromInput(prevDateValue);
-            const newDate = new Date(prevDate); // 复制前一个时间
+            const newDate = new Date(prevDate);
 
-            // 增加指定单位的时间
             switch(unit) {
                 case 'minute':
                     newDate.setMinutes(newDate.getMinutes() + 1);
@@ -489,7 +565,6 @@
                     break;
             }
 
-            // 转换为datetime-local格式（+8时区）
             const newDateStr = newDate.toISOString().slice(0, 16);
             currentItem.querySelector('.date-input').value = newDateStr;
         }
@@ -504,6 +579,7 @@
             let commands = [];
             commands.push('# EXIFTool 批量处理指令（+8时区）');
             commands.push('# 使用说明：将指令复制到终端执行，需确保已安装exiftool');
+            commands.push('# 注意：替换 {你的图片文件夹绝对路径} 为实际路径（建议使用绝对路径）');
 
             // 添加cd命令
             const dirPath = selectedFolderPath || '{你的图片文件夹绝对路径}';
@@ -517,9 +593,7 @@
                 const rotation = parseInt(item.dataset.rotation);
                 const date = item.querySelector('.date-input').value;
 
-                // 修正时区后的EXIF时间
                 const chinaDate = getChinaDateFromInput(date);
-                // 转换为exiftool支持的格式（UTC+8）
                 const exifDate = `${chinaDate.getFullYear()}-${String(chinaDate.getMonth()+1).padStart(2, '0')}-${String(chinaDate.getDate()).padStart(2, '0')} ${String(chinaDate.getHours()).padStart(2, '0')}:${String(chinaDate.getMinutes()).padStart(2, '0')}:${String(chinaDate.getSeconds()).padStart(2, '0')}`;
 
                 // EXIF方向参数
@@ -528,6 +602,7 @@
                     case 90: orientation = 6; break;
                     case 180: orientation = 3; break;
                     case 270: orientation = 8; break;
+                    case 0: orientation = 1; break;
                     default: orientation = 1;
                 }
 
