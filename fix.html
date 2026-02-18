@@ -1,0 +1,567 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>图片EXIF批量处理工具</title>
+    <script src="https://cdn.jsdelivr.net/npm/sortablejs@1.15.0/Sortable.min.js"></script>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+            font-family: Arial, sans-serif;
+        }
+
+        body {
+            padding: 20px;
+            background-color: #f5f5f5;
+        }
+
+        .container {
+            width: 100%;
+            margin: 0 auto;
+        }
+
+        .upload-area {
+            background: white;
+            padding: 30px;
+            border-radius: 8px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+            margin-bottom: 20px;
+        }
+
+        .upload-btn {
+            padding: 10px 20px;
+            background: #2196F3;
+            color: white;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 16px;
+            margin-bottom: 10px;
+        }
+
+        .upload-btn:hover {
+            background: #1976D2;
+        }
+
+        .folder-path {
+            margin-top: 10px;
+            padding: 8px;
+            background: #f8f9fa;
+            border-radius: 4px;
+            font-family: monospace;
+            font-size: 14px;
+            color: #333;
+            word-break: break-all;
+        }
+
+        .image-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+            gap: 20px;
+            background: white;
+            padding: 20px;
+            border-radius: 8px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+            margin-bottom: 20px;
+        }
+
+        .image-item {
+            position: relative;
+            border: 2px solid #eee;
+            border-radius: 8px;
+            overflow: hidden;
+            cursor: grab;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            padding: 10px;
+            background: #fff;
+        }
+
+        .image-item img {
+            width: 100%;
+            height: 200px;
+            object-fit: cover;
+            transition: transform 0.3s ease;
+            border-radius: 4px;
+            margin-bottom: 10px;
+        }
+
+        .image-controls {
+            width: 100%;
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+        }
+
+        .rotate-btn {
+            background: #FF9800;
+            color: white;
+            border: none;
+            border-radius: 4px;
+            padding: 6px 0;
+            cursor: pointer;
+            font-size: 14px;
+            width: 100%;
+        }
+
+        .rotate-btn:hover {
+            background: #F57C00;
+        }
+
+        .date-controls {
+            width: 100%;
+            display: flex;
+            flex-direction: column;
+            gap: 6px;
+        }
+
+        .date-input {
+            width: 100%;
+            font-size: 14px;
+            padding: 6px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+        }
+
+        .time-buttons {
+            display: flex;
+            gap: 4px;
+            width: 100%;
+        }
+
+        .time-btn {
+            flex: 1;
+            padding: 6px 0;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 12px;
+            color: white;
+        }
+
+        .equal-btn { background: #607D8B; }
+        .min-btn { background: #4CAF50; }
+        .day-btn { background: #2196F3; }
+        .month-btn { background: #9C27B0; }
+
+        .time-btn:hover {
+            opacity: 0.9;
+        }
+
+        .exif-commands {
+            background: white;
+            padding: 20px;
+            border-radius: 8px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        }
+
+        .commands-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 10px;
+        }
+
+        .generate-btn {
+            padding: 8px 16px;
+            background: #4CAF50;
+            color: white;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+        }
+
+        .generate-btn:hover {
+            background: #388E3C;
+        }
+
+        .copy-btn {
+            padding: 8px 16px;
+            background: #9C27B0;
+            color: white;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+        }
+
+        .copy-btn:hover {
+            background: #7B1FA2;
+        }
+
+        .commands-text {
+            width: 100%;
+            height: 200px;
+            padding: 10px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            font-family: monospace;
+            font-size: 14px;
+            resize: vertical;
+        }
+
+        .empty-state {
+            grid-column: 1 / -1;
+            text-align: center;
+            padding: 50px;
+            color: #999;
+        }
+
+        @media (max-width: 768px) {
+            .image-grid {
+                grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+            }
+            .image-item img {
+                height: 150px;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <!-- 文件夹选择区域 -->
+        <div class="upload-area">
+            <h2>图片EXIF批量处理工具</h2>
+            <br>
+            <button class="upload-btn" onclick="document.getElementById('folder-input').click()">选择图片文件夹</button>
+            <input type="file" id="folder-input" webkitdirectory directory multiple hidden accept="image/*">
+            <p>提示：仅支持本地图片文件（JPG/PNG/WebP等），所有操作均在本地完成，不会上传文件</p>
+            <div class="folder-path" id="folder-path" style="display: none;">所选文件夹：<span id="path-text"></span></div>
+        </div>
+
+        <!-- 图片展示网格 -->
+        <div class="image-grid" id="image-grid">
+            <div class="empty-state">请选择包含图片的文件夹</div>
+        </div>
+
+        <!-- EXIF指令生成区域 -->
+        <div class="exif-commands">
+            <div class="commands-header">
+                <h3>EXIFTool 指令</h3>
+                <div>
+                    <button class="generate-btn" onclick="generateExifCommands()">生成指令</button>
+                    <button class="copy-btn" onclick="copyCommands()">复制指令</button>
+                </div>
+            </div>
+            <textarea class="commands-text" id="commands-text" readonly></textarea>
+        </div>
+    </div>
+
+    <script>
+        // 存储图片信息的数组
+        let imageFiles = [];
+        // 存储所选文件夹路径
+        let selectedFolderPath = '';
+        // 时区偏移：+8小时（毫秒数）
+        const TIMEZONE_OFFSET = 8 * 60 * 60 * 1000;
+        // 图片网格容器
+        const imageGrid = document.getElementById('image-grid');
+        // 文件夹选择输入框
+        const folderInput = document.getElementById('folder-input');
+        // 文件夹路径展示元素
+        const folderPathEl = document.getElementById('folder-path');
+        const pathTextEl = document.getElementById('path-text');
+
+        // 监听文件夹选择事件
+        folderInput.addEventListener('change', handleFolderSelect);
+
+        // 处理文件夹选择
+        function handleFolderSelect(e) {
+            const files = Array.from(e.target.files);
+            // 筛选图片文件
+            const imageFilesFiltered = files.filter(file => {
+                return file.type.startsWith('image/');
+            });
+
+            if (imageFilesFiltered.length === 0) {
+                alert('所选文件夹中未找到图片文件！');
+                return;
+            }
+
+            // 提取文件夹路径
+            if (imageFilesFiltered[0].webkitRelativePath) {
+                const fullRelativePath = imageFilesFiltered[0].webkitRelativePath;
+                selectedFolderPath = fullRelativePath.substring(0, fullRelativePath.lastIndexOf('/'));
+                folderPathEl.style.display = 'block';
+                pathTextEl.textContent = selectedFolderPath || '无法获取具体路径，请手动确认';
+            }
+
+            // 清空原有内容
+            imageGrid.innerHTML = '';
+            imageFiles = imageFilesFiltered;
+
+            // 渲染图片列表
+            renderImages();
+
+            // 初始化拖动排序
+            initSortable();
+        }
+
+        // 工具函数：获取+8时区的当前时间（修正时区偏移）
+        function getChinaTimeISOString() {
+            const now = new Date();
+            // 计算UTC时间 + 8小时 = 中国标准时间
+            const chinaTime = new Date(now.getTime() + TIMEZONE_OFFSET - now.getTimezoneOffset() * 60 * 1000);
+            return chinaTime.toISOString().slice(0, 16);
+        }
+
+        // 工具函数：将datetime-local值转为+8时区的Date对象
+        function getChinaDateFromInput(value) {
+            if (!value) return new Date();
+            // 解析输入值，修正时区偏移
+            const localDate = new Date(value + ':00');
+            // 转换为+8时区的时间
+            const chinaDate = new Date(localDate.getTime() - localDate.getTimezoneOffset() * 60 * 1000);
+            return chinaDate;
+        }
+
+        // 渲染图片列表
+        function renderImages() {
+            imageFiles.forEach((file, index) => {
+                const imageItem = document.createElement('div');
+                imageItem.className = 'image-item';
+                imageItem.dataset.index = index;
+
+                // 存储旋转角度（初始0°）
+                imageItem.dataset.rotation = 0;
+
+                // 创建图片元素
+                const img = document.createElement('img');
+                const reader = new FileReader();
+                reader.onload = (e) => {
+                    img.src = e.target.result;
+                };
+                reader.readAsDataURL(file);
+
+                // 创建控制区域
+                const controls = document.createElement('div');
+                controls.className = 'image-controls';
+
+                // 旋转按钮
+                const rotateBtn = document.createElement('button');
+                rotateBtn.className = 'rotate-btn';
+                rotateBtn.textContent = '旋转90°';
+                rotateBtn.onclick = (e) => {
+                    e.stopPropagation();
+                    rotateImage(imageItem, img);
+                };
+
+                // 日期操作容器（输入框+快捷按钮）
+                const dateContainer = document.createElement('div');
+                dateContainer.className = 'date-controls';
+
+                // 日期选择框：默认值为+8时区当前时间
+                const dateInput = document.createElement('input');
+                dateInput.type = 'datetime-local';
+                dateInput.className = 'date-input';
+                dateInput.value = getChinaTimeISOString(); // 修正默认值时区
+
+                // 快捷按钮容器（单独一行）
+                const timeBtnContainer = document.createElement('div');
+                timeBtnContainer.className = 'time-buttons';
+
+                // 等于前一个时间按钮
+                const equalBtn = document.createElement('button');
+                equalBtn.className = 'time-btn equal-btn';
+                equalBtn.textContent = '=';
+                equalBtn.onclick = function() {
+                    const currentIndex = parseInt(this.closest('.image-item').dataset.index);
+                    setEqualPrevTime(currentIndex);
+                };
+
+                // +1分钟按钮（基于前一个时间）
+                const minBtn = document.createElement('button');
+                minBtn.className = 'time-btn min-btn';
+                minBtn.textContent = '+1min';
+                minBtn.onclick = function() {
+                    const currentIndex = parseInt(this.closest('.image-item').dataset.index);
+                    addTimeFromPrev(currentIndex, 'minute');
+                };
+
+                // +1天按钮（基于前一个时间）
+                const dayBtn = document.createElement('button');
+                dayBtn.className = 'time-btn day-btn';
+                dayBtn.textContent = '+1d';
+                dayBtn.onclick = function() {
+                    const currentIndex = parseInt(this.closest('.image-item').dataset.index);
+                    addTimeFromPrev(currentIndex, 'day');
+                };
+
+                // +1月按钮（基于前一个时间）
+                const monthBtn = document.createElement('button');
+                monthBtn.className = 'time-btn month-btn';
+                monthBtn.textContent = '+1m';
+                monthBtn.onclick = function() {
+                    const currentIndex = parseInt(this.closest('.image-item').dataset.index);
+                    addTimeFromPrev(currentIndex, 'month');
+                };
+
+                // 组装控件
+                timeBtnContainer.appendChild(equalBtn);
+                timeBtnContainer.appendChild(minBtn);
+                timeBtnContainer.appendChild(dayBtn);
+                timeBtnContainer.appendChild(monthBtn);
+                dateContainer.appendChild(dateInput);
+                dateContainer.appendChild(timeBtnContainer);
+                controls.appendChild(rotateBtn);
+                controls.appendChild(dateContainer);
+                imageItem.appendChild(img);
+                imageItem.appendChild(controls);
+
+                imageGrid.appendChild(imageItem);
+            });
+        }
+
+        // 初始化拖动排序
+        function initSortable() {
+            new Sortable(imageGrid, {
+                animation: 150,
+                handle: '.image-item',
+                onEnd: (e) => {
+                    // 更新图片数组顺序
+                    const oldIndex = e.oldIndex;
+                    const newIndex = e.newIndex;
+                    const [movedItem] = imageFiles.splice(oldIndex, 1);
+                    imageFiles.splice(newIndex, 0, movedItem);
+
+                    // 更新所有item的index属性
+                    document.querySelectorAll('.image-item').forEach((item, index) => {
+                        item.dataset.index = index;
+                    });
+                }
+            });
+        }
+
+        // 旋转图片
+        function rotateImage(container, img) {
+            let rotation = parseInt(container.dataset.rotation) + 90;
+            rotation = rotation % 360;
+            container.dataset.rotation = rotation;
+            img.style.transform = `rotate(${rotation}deg)`;
+        }
+
+        // 设置为前一个图片的时间（+8时区）
+        function setEqualPrevTime(currentIndex) {
+            if (currentIndex === 0) {
+                alert('这是第一张图片，没有前一个时间！');
+                return;
+            }
+            // 获取前一个和当前图片元素
+            const prevItem = document.querySelector(`.image-item[data-index="${currentIndex - 1}"]`);
+            const currentItem = document.querySelector(`.image-item[data-index="${currentIndex}"]`);
+            if (prevItem && currentItem) {
+                const prevDate = prevItem.querySelector('.date-input').value;
+                currentItem.querySelector('.date-input').value = prevDate;
+            }
+        }
+
+        // 基于前一个图片的时间增加指定单位的时间（+8时区）
+        function addTimeFromPrev(currentIndex, unit) {
+            if (currentIndex === 0) {
+                alert('这是第一张图片，没有前一个时间！');
+                return;
+            }
+            // 获取前一个和当前图片元素
+            const prevItem = document.querySelector(`.image-item[data-index="${currentIndex - 1}"]`);
+            const currentItem = document.querySelector(`.image-item[data-index="${currentIndex}"]`);
+            if (!prevItem || !currentItem) return;
+
+            const prevDateValue = prevItem.querySelector('.date-input').value;
+            if (!prevDateValue) return;
+
+            // 基于+8时区解析前一个时间
+            const prevDate = getChinaDateFromInput(prevDateValue);
+            const newDate = new Date(prevDate); // 复制前一个时间
+
+            // 增加指定单位的时间
+            switch(unit) {
+                case 'minute':
+                    newDate.setMinutes(newDate.getMinutes() + 1);
+                    break;
+                case 'day':
+                    newDate.setDate(newDate.getDate() + 1);
+                    break;
+                case 'month':
+                    newDate.setMonth(newDate.getMonth() + 1);
+                    break;
+            }
+
+            // 转换为datetime-local格式（+8时区）
+            const newDateStr = newDate.toISOString().slice(0, 16);
+            currentItem.querySelector('.date-input').value = newDateStr;
+        }
+
+        // 生成EXIFTool指令（修复时区，添加OffsetTimeOriginal）
+        function generateExifCommands() {
+            if (imageFiles.length === 0) {
+                alert('请先选择图片文件夹！');
+                return;
+            }
+
+            let commands = [];
+            commands.push('# EXIFTool 批量处理指令（+8时区）');
+            commands.push('# 使用说明：将指令复制到终端执行，需确保已安装exiftool');
+
+            // 添加cd命令
+            const dirPath = selectedFolderPath || '{你的图片文件夹绝对路径}';
+            commands.push(`cd "${dirPath}"`);
+            commands.push('');
+
+            // 按当前显示顺序生成指令
+            document.querySelectorAll('.image-item').forEach(item => {
+                const index = parseInt(item.dataset.index);
+                const file = imageFiles[index];
+                const rotation = parseInt(item.dataset.rotation);
+                const date = item.querySelector('.date-input').value;
+
+                // 修正时区后的EXIF时间
+                const chinaDate = getChinaDateFromInput(date);
+                // 转换为exiftool支持的格式（UTC+8）
+                const exifDate = `${chinaDate.getFullYear()}-${String(chinaDate.getMonth()+1).padStart(2, '0')}-${String(chinaDate.getDate()).padStart(2, '0')} ${String(chinaDate.getHours()).padStart(2, '0')}:${String(chinaDate.getMinutes()).padStart(2, '0')}:${String(chinaDate.getSeconds()).padStart(2, '0')}`;
+
+                // EXIF方向参数
+                let orientation = 1;
+                switch(rotation) {
+                    case 90: orientation = 6; break;
+                    case 180: orientation = 3; break;
+                    case 270: orientation = 8; break;
+                    default: orientation = 1;
+                }
+
+                const filename = file.name.replace(/'/g, "\\'");
+                // 关键：添加OffsetTimeOriginal='+08:00' 设置时区偏移
+                const cmd = `exiftool -Orientation=${orientation} -DateTimeOriginal='${exifDate}' -CreateDate='${exifDate}' -ModifyDate='${exifDate}' -OffsetTimeOriginal='+08:00' '${filename}'`;
+                commands.push(cmd);
+            });
+
+            document.getElementById('commands-text').value = commands.join('\n');
+        }
+
+        // 复制指令
+        function copyCommands() {
+            const textarea = document.getElementById('commands-text');
+            if (!textarea.value) {
+                alert('请先生成指令！');
+                return;
+            }
+
+            if (navigator.clipboard) {
+                navigator.clipboard.writeText(textarea.value).then(() => {
+                    alert('指令已复制到剪贴板！');
+                }).catch(() => {
+                    textarea.select();
+                    document.execCommand('copy');
+                    alert('指令已复制到剪贴板！');
+                });
+            } else {
+                textarea.select();
+                document.execCommand('copy');
+                alert('指令已复制到剪贴板！');
+            }
+        }
+    </script>
+</body>
+</html>
