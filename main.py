@@ -21,7 +21,7 @@ from PIL import Image
 import piexif
 import matplotlib.pyplot as plt
 import matplotlib.patches as patches
-from transformers import AutoProcessor, AutoModelForZeroShotObjectDetection
+from transformers import AutoProcessor, AutoModelForZeroShotObjectDetection, AutoModelForVision2Seq
 from collections import defaultdict
 from tqdm import tqdm
 from rich.console import Console
@@ -93,9 +93,17 @@ class PhotoDetector:
             self.processor = AutoProcessor.from_pretrained(model_id)
             self.model = AutoModelForZeroShotObjectDetection.from_pretrained(model_id).to(self.device)
         logger.info(f"{EMOJI_SUCCESS} Model loaded successfully")
+
+    def add_border(self, image, border_size=100):
+        new_width = image.width + 2 * border_size
+        new_height = image.height + 2 * border_size
+        bordered_image = Image.new('RGB', (new_width, new_height), 'white')
+        bordered_image.paste(image, (border_size, border_size))
+        logger.info(f"Added {border_size}px white border. New size: {image.size[0]}x{image.size[1]}")
+        return bordered_image
     
     def detect_photos(self, image_path, text_prompt="a photo. a picture.", 
-                     box_threshold=0.05, text_threshold=0.05, confidence_threshold=0.15):
+                     box_threshold=0.05, text_threshold=0.05, confidence_threshold=0.15, add_border=True):
         """
         Detect photos in a scanned image using text prompts.
         
@@ -105,6 +113,7 @@ class PhotoDetector:
             box_threshold (float): Confidence threshold for bounding boxes
             text_threshold (float): Confidence threshold for text
             confidence_threshold (float): Final confidence threshold for keeping detections
+            add_border (bool): Add 20px white border around the image before detection
             
         Returns:
             tuple: (original_image, bounding_boxes, scores, labels)
@@ -122,6 +131,10 @@ class PhotoDetector:
         except Exception as e:
             logger.error(f"{EMOJI_ERROR} Error loading image {image_path}: {e}")
             return None, [], [], []
+        
+        # Add white border if requested
+        if add_border:
+            image = self.add_border(image=image)
         
         # Ensure text prompt is properly formatted
         if not text_prompt.islower() or not text_prompt.endswith('.'):
@@ -275,7 +288,7 @@ class PhotoDetector:
         
         return filtered_boxes, filtered_scores, filtered_labels
     
-    def create_visualization(self, image_path, boxes, scores, labels, output_paths, output_vis_path):
+    def create_visualization(self, image_path, boxes, scores, labels, output_paths, output_vis_path, add_border=True):
         """
         Create visualization showing original image with bounding boxes and cropped results.
         
@@ -291,6 +304,10 @@ class PhotoDetector:
         
         # Load the original image with PIL to preserve colors
         original_pil = Image.open(image_path)
+
+        # Add white border if requested
+        if add_border:
+            original_pil = self.add_border(image=original_pil)
         
         # Create figure
         if output_paths and len(output_paths) > 0:
@@ -346,10 +363,74 @@ class PhotoDetector:
         logger.info(f"{EMOJI_SUCCESS} Visualization saved to [cyan]{output_vis_path}[/cyan]")
 
 
+    def estimate_orientation(self, pil_image):
+        """
+        Estimate image orientation in multiples of 90 degrees using SmolVLM-256M-Instruct.
+        Returns one of {1, 3, 6, 8} corresponding to {0°, 180°, 90° CW, 270° CW}.
+        """
+        try:
+            # Load SmolVLM model and processor (cached for efficiency)
+            if not hasattr(self, '_smolvlm_model'):
+                with console.status("[bold green]Loading SmolVLM model for orientation detection...[/bold green]", spinner="dots"):
+                    self._smolvlm_model = AutoModelForVision2Seq.from_pretrained("HuggingFaceTB/SmolVLM-256M-Instruct")
+                    self._smolvlm_processor = AutoProcessor.from_pretrained("HuggingFaceTB/SmolVLM-256M-Instruct")
+                    self._smolvlm_model.to(self.device)
+                logger.info(f"{EMOJI_SUCCESS} SmolVLM model loaded for orientation detection")
+
+            # Define the messages for orientation estimation (SmolVLM uses chat template)
+            messages = [
+                {
+                    "role": "user",
+                    "content": [
+                        {"type": "image"},
+                        {"type": "text", "text": "What is the orientation of this image? Answer with one of: normal, rotated 90 degrees clockwise, rotated 180 degrees, rotated 270 degrees clockwise."}
+                    ]
+                }
+            ]
+
+            # Apply chat template
+            prompt = self._smolvlm_processor.apply_chat_template(messages, add_generation_prompt=True)
+
+            # Process image and text
+            inputs = self._smolvlm_processor(text=prompt, images=pil_image, return_tensors="pt").to(self.device)
+
+            # Generate response
+            with torch.no_grad():
+                generated_ids = self._smolvlm_model.generate(**inputs, max_new_tokens=50, do_sample=False)
+                generated_text = self._smolvlm_processor.batch_decode(generated_ids, skip_special_tokens=True)[0]
+
+            # Parse the response to determine orientation
+            response_lower: str = generated_text.lower().strip()
+            response_lower = response_lower[response_lower.rfind('assistant:'):]
+            logger.info(f'model response: {response_lower}')
+            orientation_map = {
+                "normal": 1,
+                "rotated 90 degrees clockwise": 6,
+                "rotated 180 degrees": 3,
+                "rotated 270 degrees clockwise": 8
+            }
+
+            best_orientation = None
+            for key, value in orientation_map.items():
+                if key in response_lower:
+                    best_orientation = value
+                    break
+
+            if best_orientation is None:
+                logger.warning(f"{EMOJI_WARNING} Could not parse orientation from response: {generated_text}, defaulting to Normal")
+                return 1
+
+            logger.info(f"{EMOJI_MAGIC} Estimated orientation: {best_orientation} (response: {generated_text.strip()})")
+            return best_orientation
+
+        except Exception as e:
+            logger.warning(f"{EMOJI_WARNING} SmolVLM orientation estimation failed: {e}, defaulting to Normal")
+            return 1
+
 def process_images(detector, input_dir, output_dir, vis_dir, text_prompt,
                   preserve_structure=False, remove_overlaps=False, 
                   overlap_threshold=0.05, confidence_threshold=0.15,
-                  sample_size=None, seed=42):
+                  sample_size=None, seed=42, auto_orient=False, rotate_pixels=False, add_border=True):
     """
     Process all images in the input directory and save results.
     
@@ -365,6 +446,9 @@ def process_images(detector, input_dir, output_dir, vis_dir, text_prompt,
         confidence_threshold (float): Minimum confidence score to keep detections
         sample_size (int): Number of random images to process (None = all)
         seed (int): Random seed for reproducibility
+        auto_orient (bool): Estimate orientation of each cropped photo and write EXIF Orientation.
+        rotate_pixels (bool): If True, physically rotate pixels to upright and set Orientation=1.
+        add_border (bool): Add 20px white border around images before detection. Default: True.
     """
     console.print(f"\n{EMOJI_ROCKET} [bold green]Starting NerdScan processing[/bold green]")
     console.print(f"{EMOJI_FOLDER} Input: [cyan]{input_dir}[/cyan]")
@@ -376,6 +460,8 @@ def process_images(detector, input_dir, output_dir, vis_dir, text_prompt,
         console.print(f"{EMOJI_MAGIC} Removing overlaps with threshold: [yellow]{overlap_threshold:.2f}[/yellow]")
     if preserve_structure:
         console.print(f"{EMOJI_MAGIC} Preserving folder structure")
+    if auto_orient:
+        console.print(f"{EMOJI_MAGIC} Auto-orientation enabled (rotate_pixels={'ON' if rotate_pixels else 'OFF'})")
     
     # Create output directories
     os.makedirs(output_dir, exist_ok=True)
@@ -483,6 +569,20 @@ def process_images(detector, input_dir, output_dir, vis_dir, text_prompt,
                 
                 # Crop the image
                 cropped_pil = image.crop((x1, y1, x2, y2))
+
+                # Auto orientation estimation and optional rotation
+                exif_orientation = None
+                if auto_orient:
+                    exif_orientation = detector.estimate_orientation(cropped_pil)
+                    if rotate_pixels and exif_orientation in (3, 6, 8):
+                        # Apply rotation to pixels and reset orientation to Normal
+                        if exif_orientation == 3:
+                            cropped_pil = cropped_pil.rotate(180, expand=True)
+                        elif exif_orientation == 6:
+                            cropped_pil = cropped_pil.rotate(-90, expand=True)  # 90 CW
+                        elif exif_orientation == 8:
+                            cropped_pil = cropped_pil.rotate(90, expand=True)   # 270 CW
+                        exif_orientation = 1
                 
                 # Generate output filename
                 if year:
@@ -511,67 +611,68 @@ def process_images(detector, input_dir, output_dir, vis_dir, text_prompt,
                 # Save the cropped image
                 cropped_pil.save(output_path, quality=95)
                 output_paths.append(output_path)
-                
-                # Set EXIF date if year is provided
-                if exif_date_str:
-                    try:
-                        # Basic EXIF data with piexif
-                        zeroth_ifd = {
-                            piexif.ImageIFD.Make: "NerdScan",
-                            piexif.ImageIFD.Software: "PhotoDetector"
-                        }
-                        exif_ifd = {
+
+                # Write EXIF metadata: orientation (if detected) and optional dates
+                try:
+                    zeroth_ifd = {
+                        piexif.ImageIFD.Make: "NerdScan",
+                        piexif.ImageIFD.Software: "PhotoDetector"
+                    }
+                    if exif_orientation is not None:
+                        zeroth_ifd[piexif.ImageIFD.Orientation] = int(exif_orientation)
+
+                    exif_ifd = {}
+                    if exif_date_str:
+                        exif_ifd.update({
                             piexif.ExifIFD.DateTimeOriginal: exif_date_str,
                             piexif.ExifIFD.DateTimeDigitized: exif_date_str
-                        }
-                        exif_dict = {"0th": zeroth_ifd, "Exif": exif_ifd}
-                        exif_bytes = piexif.dump(exif_dict)
-                        
-                        # Read the saved image and add EXIF data
-                        img = Image.open(output_path)
-                        img.save(output_path, exif=exif_bytes, quality=95)
-                        
-                        # Parse parts for IPTC format
-                        date_parts = exif_date_str.split()[0].split(':')
-                        iptc_date_str = f"{date_parts[0]}{date_parts[1]}{date_parts[2]}"
-                        
-                        # Use exiftool for comprehensive metadata if available
-                        try:
-                            cmd = [
-                                'exiftool',
-                                '-overwrite_original',
-                                # Set standard EXIF date tags
+                        })
+
+                    exif_dict = {"0th": zeroth_ifd}
+                    if exif_ifd:
+                        exif_dict["Exif"] = exif_ifd
+                    exif_bytes = piexif.dump(exif_dict)
+
+                    # Re-save with EXIF
+                    img = Image.open(output_path)
+                    img.save(output_path, exif=exif_bytes, quality=95)
+
+                    # exiftool enhancement if available
+                    try:
+                        cmd = ['exiftool', '-overwrite_original']
+                        if exif_date_str:
+                            # Parse parts for IPTC format
+                            date_parts = exif_date_str.split()[0].split(':')
+                            iptc_date_str = f"{date_parts[0]}{date_parts[1]}{date_parts[2]}"
+                            cmd.extend([
                                 f'-EXIF:DateTimeOriginal={exif_date_str}',
                                 f'-EXIF:CreateDate={exif_date_str}',
                                 f'-EXIF:ModifyDate={exif_date_str}',
-                                # Set XMP date tags
                                 f'-XMP:DateCreated={exif_date_str}',
                                 f'-XMP:CreateDate={exif_date_str}',
                                 f'-XMP:ModifyDate={exif_date_str}',
-                                # Set IPTC date tags (YYYYMMDD format)
                                 f'-IPTC:DateCreated={iptc_date_str}',
-                                # Set filesystem dates
                                 f'-FileCreateDate={exif_date_str}',
                                 f'-FileModifyDate={exif_date_str}',
-                                # Set all dates
                                 f'-AllDates={exif_date_str}',
-                                '-E', # preserve existing tags
-                                '-F', # fix tags that don't match expected format
-                                output_path
-                            ]
-                            result = subprocess.run(cmd, capture_output=True, text=True, check=False)
-                            
-                            if result.returncode == 0:
-                                logger.info(f"{EMOJI_SUCCESS} Set EXIF date via exiftool for {output_path}")
-                            else:
-                                logger.warning(f"{EMOJI_WARNING} Error running exiftool: {result.stderr}")
-                                
-                        except Exception as e:
-                            logger.warning(f"{EMOJI_WARNING} Failed to run exiftool (not installed?): {e}")
-                        
-                        logger.info(f"{EMOJI_CLOCK} Set EXIF date {exif_date_str} for {output_path}")
+                            ])
+                        if exif_orientation is not None:
+                            cmd.append(f'-Orientation#={int(exif_orientation)}')
+                        cmd.extend(['-E', '-F', output_path])
+                        result = subprocess.run(cmd, capture_output=True, text=True, check=False)
+                        if result.returncode == 0:
+                            logger.info(f"{EMOJI_SUCCESS} Updated metadata via exiftool for {output_path}")
+                        else:
+                            logger.warning(f"{EMOJI_WARNING} Error running exiftool: {result.stderr}")
                     except Exception as e:
-                        logger.error(f"{EMOJI_ERROR} Error setting EXIF data: {e}")
+                        logger.warning(f"{EMOJI_WARNING} Failed to run exiftool (not installed?): {e}")
+
+                    if exif_date_str:
+                        logger.info(f"{EMOJI_CLOCK} Set EXIF date {exif_date_str} for {output_path}")
+                    if exif_orientation is not None:
+                        logger.info(f"{EMOJI_CLOCK} Set EXIF orientation {int(exif_orientation)} for {output_path}")
+                except Exception as e:
+                    logger.error(f"{EMOJI_ERROR} Error setting EXIF metadata: {e}")
                 
                 found_photos += 1
             
@@ -579,7 +680,7 @@ def process_images(detector, input_dir, output_dir, vis_dir, text_prompt,
             if output_paths:
                 vis_path = os.path.join(curr_vis_dir, f"{base_filename}_visualization.jpg")
                 detector.create_visualization(
-                    input_path, boxes, scores, labels, output_paths, vis_path
+                    input_path, boxes, scores, labels, output_paths, vis_path, add_border
                 )
             
             processed_files += 1
@@ -639,6 +740,14 @@ def main():
         help="Minimum confidence score to keep detections (0.0 to 1.0). Lower values find more potential photos but may increase false positives. Higher values are stricter. Default: 0.15."
     )
     parser.add_argument(
+        "--auto-orient", action="store_true", default=False,
+        help="Estimate orientation of each cropped photo and set EXIF Orientation (no pixel rotation)."
+    )
+    parser.add_argument(
+        "--rotate-pixels", action="store_true", default=False,
+        help="Physically rotate pixels upright when auto-orienting; Orientation tag will be set to Normal."
+    )
+    parser.add_argument(
         "--seed", type=int, default=42,
         help="Random seed for reproducibility."
     )
@@ -650,8 +759,20 @@ def main():
         "--device", default=None, 
         help="Device to run the model on ('cuda' or 'cpu'). Default: use CUDA if available."
     )
+    parser.add_argument(
+        "--add-border", action="store_true", default=True,
+        help="Add 20px white border around images before detection. Default: enabled."
+    )
+    parser.add_argument(
+        "--no-border", action="store_true", default=False,
+        help="Disable adding white border around images before detection."
+    )
     
     args = parser.parse_args()
+    
+    # Handle border flag logic
+    if args.no_border:
+        args.add_border = False
     
     # Print welcome message
     console.print(f"\n[bold cyan]{'='*60}[/bold cyan]")
@@ -695,7 +816,10 @@ def main():
             overlap_threshold=args.overlap_threshold,
             confidence_threshold=args.confidence_threshold,
             sample_size=None,
-            seed=args.seed
+            seed=args.seed,
+            auto_orient=args.auto_orient,
+            rotate_pixels=args.rotate_pixels,
+            add_border=args.add_border
         )
     else:
         # Process directory
@@ -720,7 +844,10 @@ def main():
             overlap_threshold=args.overlap_threshold,
             confidence_threshold=args.confidence_threshold,
             sample_size=args.sample_size,
-            seed=args.seed
+            seed=args.seed,
+            auto_orient=args.auto_orient,
+            rotate_pixels=args.rotate_pixels,
+            add_border=args.add_border
         )
 
 
