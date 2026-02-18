@@ -422,9 +422,10 @@ class PhotoDetector:
             return 1
 
 def process_images(detector, input_dir, output_dir, vis_dir, text_prompt,
-                  preserve_structure=False, remove_overlaps=False, 
-                  overlap_threshold=0.05, confidence_threshold=0.15,
-                  sample_size=None, seed=42, auto_orient=False, rotate_pixels=False, add_border=True):
+                   preserve_structure=False, remove_overlaps=False,
+                   overlap_threshold=0.05, confidence_threshold=0.15,
+                   file_name_filter=None,
+                   sample_size=None, seed=42, auto_orient=False, rotate_pixels=False, add_border=True):
     """
     Process all images in the input directory and save results.
     
@@ -438,6 +439,7 @@ def process_images(detector, input_dir, output_dir, vis_dir, text_prompt,
         remove_overlaps (bool): Whether to remove overlapping boxes
         overlap_threshold (float): Threshold for overlap detection
         confidence_threshold (float): Minimum confidence score to keep detections
+        file_name_filter (list[str]): List of file names to filter
         sample_size (int): Number of random images to process (None = all)
         seed (int): Random seed for reproducibility
         auto_orient (bool): Estimate orientation of each cropped photo and write EXIF Orientation.
@@ -470,6 +472,9 @@ def process_images(detector, input_dir, output_dir, vis_dir, text_prompt,
                     l, ext = os.path.splitext(filename)
                     if l.endswith('_alt'):  # 修改的直接跳过，实际会被原始图片调用到。
                         continue
+                    if file_name_filter is not None:
+                        if not any(f in l for f in file_name_filter):
+                            continue
                     full_path = os.path.join(root, filename)
                     all_image_files.append(full_path)
 
@@ -501,8 +506,8 @@ def process_images(detector, input_dir, output_dir, vis_dir, text_prompt,
         year = None
 
         l, ext = os.path.splitext(input_path)
-        if os.path.isfile(f'{l}_alt.{ext}'):
-            input_path = f'{l}_alt.{ext}'  # 如果手动修改过，则用这个作为输入图片地址。
+        if os.path.isfile(f'{l}_alt{ext}'):
+            input_path = f'{l}_alt{ext}'  # 如果手动修改过，则用这个作为输入图片地址。
 
         # load image
         logger.info(f"{EMOJI_PHOTO} Processing image: [cyan]{input_path}[/cyan]")
@@ -548,7 +553,7 @@ def process_images(detector, input_dir, output_dir, vis_dir, text_prompt,
                 # remove boxes > 80%
                 boxes, scores, labels = detector.remove_large_small_boxes(
                     boxes, scores, labels,size=image.size[0]*image.size[1],
-                    min_percent=0.1,
+                    min_percent=0.05,
                     max_percent=0.8)
 
                 boxes, scores, labels = detector.remove_overlapping_boxes(
@@ -745,8 +750,9 @@ def main():
         help="Text prompt for detection. Should be lowercase and end with a period."
     )
     parser.add_argument(
-        "--single-image", 
-        help="Process a single image instead of a directory."
+        "--filter",
+        nargs="+", type=str, default=[],
+        help="filter name in file."
     )
     parser.add_argument(
         "--preserve-structure", action="store_true", 
@@ -809,71 +815,35 @@ def main():
     
     # Initialize detector
     detector = PhotoDetector(device=args.device, seed=args.seed)
-    
-    if args.single_image:
-        # Process a single image
-        if not os.path.isfile(args.single_image):
-            console.print(f"{EMOJI_ERROR} [bold red]Error: Input file '{args.single_image}' not found.[/bold red]")
-            return
-        
-        # Setup output directories
-        output_dir = os.path.join(script_dir, args.output, "crops")
-        vis_dir = os.path.join(script_dir, args.output, "visualizations")
-        os.makedirs(output_dir, exist_ok=True)
-        os.makedirs(vis_dir, exist_ok=True)
-        
-        # Get file name and potential year from parent directory
-        input_path = os.path.abspath(args.single_image)
-        parent_dir = os.path.basename(os.path.dirname(input_path))
-        filename = os.path.basename(input_path)
-        
-        console.print(f"{EMOJI_PHOTO} Processing single image: [cyan]{input_path}[/cyan]")
-        
-        # Process this single image
-        process_images(
-            detector=detector,
-            input_dir=os.path.dirname(input_path),
-            output_dir=output_dir,
-            vis_dir=vis_dir,
-            text_prompt=args.text_prompt,
-            preserve_structure=False,  # Not relevant for single image
-            remove_overlaps=args.remove_overlaps,
-            overlap_threshold=args.overlap_threshold,
-            confidence_threshold=args.confidence_threshold,
-            sample_size=None,
-            seed=args.seed,
-            auto_orient=args.auto_orient,
-            rotate_pixels=args.rotate_pixels,
-            add_border=args.add_border
-        )
-    else:
-        # Process directory
-        input_dir = os.path.join(script_dir, args.input)
-        output_dir = os.path.join(script_dir, args.output, "crops")
-        vis_dir = os.path.join(script_dir, args.output, "visualizations")
-        
-        # Check if input directory exists
-        if not os.path.isdir(input_dir):
-            console.print(f"{EMOJI_ERROR} [bold red]Error: Input directory '{input_dir}' not found.[/bold red]")
-            return
-        
-        # Process images
-        process_images(
-            detector=detector,
-            input_dir=input_dir,
-            output_dir=output_dir,
-            vis_dir=vis_dir,
-            text_prompt=args.text_prompt,
-            preserve_structure=args.preserve_structure,
-            remove_overlaps=args.remove_overlaps,
-            overlap_threshold=args.overlap_threshold,
-            confidence_threshold=args.confidence_threshold,
-            sample_size=args.sample_size,
-            seed=args.seed,
-            auto_orient=args.auto_orient,
-            rotate_pixels=args.rotate_pixels,
-            add_border=args.add_border
-        )
+
+    # Process directory
+    input_dir = os.path.join(script_dir, args.input)
+    output_dir = os.path.join(script_dir, args.output, "crops")
+    vis_dir = os.path.join(script_dir, args.output, "visualizations")
+
+    # Check if input directory exists
+    if not os.path.isdir(input_dir):
+        console.print(f"{EMOJI_ERROR} [bold red]Error: Input directory '{input_dir}' not found.[/bold red]")
+        return
+
+    # Process images
+    process_images(
+        detector=detector,
+        input_dir=input_dir,
+        output_dir=output_dir,
+        vis_dir=vis_dir,
+        text_prompt=args.text_prompt,
+        preserve_structure=args.preserve_structure,
+        remove_overlaps=args.remove_overlaps,
+        overlap_threshold=args.overlap_threshold,
+        confidence_threshold=args.confidence_threshold,
+        file_name_filter=args.filter,
+        sample_size=args.sample_size,
+        seed=args.seed,
+        auto_orient=args.auto_orient,
+        rotate_pixels=args.rotate_pixels,
+        add_border=args.add_border
+    )
 
 
 if __name__ == "__main__":
