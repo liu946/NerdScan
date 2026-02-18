@@ -102,13 +102,13 @@ class PhotoDetector:
         logger.info(f"Added {border_size}px white border. New size: {image.size[0]}x{image.size[1]}")
         return bordered_image
     
-    def detect_photos(self, image_path, text_prompt="a photo. a picture.", 
-                     box_threshold=0.05, text_threshold=0.05, confidence_threshold=0.15, add_border=True):
+    def detect_photos(self, image, text_prompt="a photo. a picture.",
+                     box_threshold=0.05, text_threshold=0.05, confidence_threshold=0.15):
         """
         Detect photos in a scanned image using text prompts.
         
         Args:
-            image_path (str): Path to the input image
+            image : PIL image data
             text_prompt (str): Text prompt for detection (lowercase, end with period)
             box_threshold (float): Confidence threshold for bounding boxes
             text_threshold (float): Confidence threshold for text
@@ -118,23 +118,6 @@ class PhotoDetector:
         Returns:
             tuple: (original_image, bounding_boxes, scores, labels)
         """
-        logger.info(f"{EMOJI_PHOTO} Processing image: [cyan]{image_path}[/cyan]")
-        
-        # Load image
-        try:
-            image = Image.open(image_path)
-            if image.mode != 'RGB':
-                image = image.convert('RGB')
-            # Increase the pixel limit for Pillow
-            Image.MAX_IMAGE_PIXELS = None # Disable the limit
-            logger.info(f"Image loaded: {image.size[0]}x{image.size[1]}")
-        except Exception as e:
-            logger.error(f"{EMOJI_ERROR} Error loading image {image_path}: {e}")
-            return None, [], [], []
-        
-        # Add white border if requested
-        if add_border:
-            image = self.add_border(image=image)
         
         # Ensure text prompt is properly formatted
         if not text_prompt.islower() or not text_prompt.endswith('.'):
@@ -160,7 +143,7 @@ class PhotoDetector:
             )
         
         if not results or len(results) == 0 or "boxes" not in results[0]:
-            logger.warning(f"{EMOJI_WARNING} No photos detected in {image_path}")
+            logger.warning(f"{EMOJI_WARNING} No photos detected")
             return image, [], [], []
         
         # Extract results
@@ -171,7 +154,7 @@ class PhotoDetector:
         # Apply confidence threshold filtering
         high_confidence_indices = np.where(scores >= confidence_threshold)[0]
         if len(high_confidence_indices) == 0:
-            logger.warning(f"{EMOJI_WARNING} No photos with confidence >= {confidence_threshold} found in {image_path}")
+            logger.warning(f"{EMOJI_WARNING} No photos with confidence >= {confidence_threshold} found.")
             return image, [], [], []
             
         boxes = boxes[high_confidence_indices]
@@ -287,27 +270,38 @@ class PhotoDetector:
             filtered_scores = np.array(filtered_scores)
         
         return filtered_boxes, filtered_scores, filtered_labels
+
+    def remove_large_small_boxes(self, boxes, scores, labels, size, min_percent=0., max_percent=1.):
+        remain = []
+        for i, box in enumerate(boxes):
+            # [x1, y1, x2, y2]
+            cur_size = abs((box[2] - box[0]) * (box[3] - box[1]))
+            if min_percent <= cur_size/size <= max_percent:
+                remain.append(True)
+            else:
+                logger.info(f' Removing box {box} with size {cur_size/size:.2f}')
+                remain.append(False)
+        boxes = [b for i, b in enumerate(boxes) if remain[i]]
+        scores = [s for i, s in enumerate(scores) if remain[i]]
+        labels = [l for i, l in enumerate(labels) if remain[i]]
+        return boxes, scores, labels
+
     
-    def create_visualization(self, image_path, boxes, scores, labels, output_paths, output_vis_path, add_border=True):
+    def create_visualization(self, image, boxes, scores, labels, output_paths, output_vis_path):
         """
         Create visualization showing original image with bounding boxes and cropped results.
         
         Args:
-            image_path (str): Path to the original image
+            image: image data
             boxes (list): List of bounding boxes
             scores (list): Confidence scores for each detection
             labels (list): Labels for each detection
             output_paths (list): Paths to saved cropped images
             output_vis_path (str): Path to save the visualization
         """
-        logger.info(f"Creating visualization for: [cyan]{image_path}[/cyan]")
         
         # Load the original image with PIL to preserve colors
-        original_pil = Image.open(image_path)
-
-        # Add white border if requested
-        if add_border:
-            original_pil = self.add_border(image=original_pil)
+        original_pil = image
         
         # Create figure
         if output_paths and len(output_paths) > 0:
@@ -473,6 +467,9 @@ def process_images(detector, input_dir, output_dir, vis_dir, text_prompt,
         for root, _, files in os.walk(input_dir):
             for filename in files:
                 if filename.lower().endswith(('.png', '.jpg', '.jpeg', '.tif', '.tiff', '.bmp', '.webp')):
+                    l, ext = os.path.splitext(filename)
+                    if l.endswith('_alt'):  # 修改的直接跳过，实际会被原始图片调用到。
+                        continue
                     full_path = os.path.join(root, filename)
                     all_image_files.append(full_path)
 
@@ -502,6 +499,28 @@ def process_images(detector, input_dir, output_dir, vis_dir, text_prompt,
         filename = os.path.basename(input_path)
         parent_dir_name = os.path.basename(root)
         year = None
+
+        l, ext = os.path.splitext(input_path)
+        if os.path.isfile(f'{l}_alt.{ext}'):
+            input_path = f'{l}_alt.{ext}'  # 如果手动修改过，则用这个作为输入图片地址。
+
+        # load image
+        logger.info(f"{EMOJI_PHOTO} Processing image: [cyan]{input_path}[/cyan]")
+
+        # Load image
+        try:
+            image = Image.open(input_path)
+            if image.mode != 'RGB':
+                image = image.convert('RGB')
+            # Increase the pixel limit for Pillow
+            Image.MAX_IMAGE_PIXELS = None  # Disable the limit
+            logger.info(f"Image loaded: {image.size[0]}x{image.size[1]}")
+        except Exception as e:
+            logger.error(f"{EMOJI_ERROR} Error loading image {input_path}: {e}")
+            return None, [], [], []
+
+        if add_border:
+            image = detector.add_border(image, border_size=30)
         
         # Check if parent_dir_name is a 4-digit year
         if re.match(r'^\d{4}$', parent_dir_name):
@@ -518,7 +537,7 @@ def process_images(detector, input_dir, output_dir, vis_dir, text_prompt,
         try:
             # Detect photos in the image with confidence threshold
             image, boxes, scores, labels = detector.detect_photos(
-                input_path, text_prompt, confidence_threshold=confidence_threshold
+                image, text_prompt, confidence_threshold=confidence_threshold
             )
             
             if image is None or len(boxes) == 0:
@@ -526,6 +545,12 @@ def process_images(detector, input_dir, output_dir, vis_dir, text_prompt,
             
             # Remove overlapping boxes if requested
             if remove_overlaps and len(boxes) > 1:
+                # remove boxes > 80%
+                boxes, scores, labels = detector.remove_large_small_boxes(
+                    boxes, scores, labels,size=image.size[0]*image.size[1],
+                    min_percent=0.1,
+                    max_percent=0.8)
+
                 boxes, scores, labels = detector.remove_overlapping_boxes(
                     boxes, scores, labels, overlap_threshold
                 )
@@ -680,7 +705,7 @@ def process_images(detector, input_dir, output_dir, vis_dir, text_prompt,
             if output_paths:
                 vis_path = os.path.join(curr_vis_dir, f"{base_filename}_visualization.jpg")
                 detector.create_visualization(
-                    input_path, boxes, scores, labels, output_paths, vis_path, add_border
+                    image, boxes, scores, labels, output_paths, vis_path
                 )
             
             processed_files += 1
