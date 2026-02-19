@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>图片EXIF批量处理工具（放大预览+原始时间+CSS最短旋转）</title>
+    <title>图片EXIF批量处理工具（适配UserComment字节数组）</title>
     <script src="https://cdn.jsdelivr.net/npm/exif-js@2.3.0/exif.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/sortablejs@1.15.0/Sortable.min.js"></script>
     <style>
@@ -105,7 +105,11 @@
             align-items: center;
             padding: 8px;
             background: #333;
-            transition: border 0.2s;
+            transition: border 0.2s, background 0.2s;
+        }
+        .image-item.locked {
+            background: #4a4028;
+            border-color: #F5DEB3;
         }
 
         .image-item:hover {
@@ -132,7 +136,7 @@
             height: 100%;
             object-fit: cover;
             border-radius: 4px;
-            cursor: zoom-in; /* 鼠标悬浮显示放大图标 */
+            cursor: zoom-in;
         }
 
         .rotation-degree {
@@ -188,6 +192,25 @@
 
         .rotate-btn.counterclockwise:hover {
             background: #D32F2F;
+        }
+
+        .lock-btn {
+            flex: 1;
+            background: #696969;
+            color: white;
+            border: none;
+            border-radius: 4px;
+            padding: 8px 0;
+            cursor: pointer;
+            font-size: 18px;
+            transition: background 0.2s;
+        }
+        .lock-btn:hover {
+            background: #808080;
+        }
+        .lock-btn.locked {
+            background: #F5DEB3;
+            color: #333;
         }
 
         .date-controls {
@@ -306,7 +329,6 @@
             color: #999;
         }
 
-        /* ========== 放大预览：限制最大高度，不会超出屏幕 ========== */
         .image-preview {
             position: fixed;
             top: 0;
@@ -331,11 +353,10 @@
 
         .preview-img {
             max-width: 100%;
-            max-height: 90vh; /* 核心：限制最大高度为屏幕的90% */
+            max-height: 90vh;
             object-fit: contain;
             border-radius: 8px;
         }
-        /* ====================================================== */
 
         @media (max-width: 768px) {
             .image-grid {
@@ -355,19 +376,19 @@
 <body>
     <div class="container">
         <div class="upload-area">
-            <h2>图片EXIF批量处理工具（放大预览+原始时间）</h2>
+            <h2>图片EXIF批量处理工具（适配UserComment字节数组）</h2>
             <br>
             <div class="upload-btn-group">
                 <button class="upload-btn" onclick="document.getElementById('folder-input').click()">选择图片文件夹</button>
                 <button class="sort-btn" onclick="sortImagesBySelectedTime()" id="sort-btn" disabled>按选择的时间重新排序</button>
             </div>
             <input type="file" id="folder-input" webkitdirectory directory multiple hidden accept="image/*">
-            <p>提示：1. 点击图片可放大预览，再次点击关闭；2. 时间全程无时区换算，仅输出指令时添加时区参数（+08:00）</p>
+            <p>提示：1. 点击图片可放大预览，再次点击关闭；2. 时间全程无时区换算，仅输出指令时添加时区参数（+08:00）；3. 锁定状态写入EXIF的ConfirmedDate标签（1=锁定，未锁定则删除该标签）</p>
             <div class="folder-path" id="folder-path" style="display: none;">所选文件夹：<span id="path-text"></span></div>
         </div>
 
         <div class="image-grid" id="image-grid">
-            <div class="empty-state">请选择包含图片的文件夹</div>
+            <div class="empty-state">请选择包含图片文件夹</div>
         </div>
 
         <div class="exif-commands">
@@ -382,7 +403,6 @@
         </div>
     </div>
 
-    <!-- 放大预览窗口 -->
     <div class="image-preview" id="image-preview" onclick="closeImagePreview()">
         <div class="preview-content">
             <img src="" alt="预览图片" class="preview-img" id="preview-img">
@@ -463,6 +483,47 @@
             return `${year}-${month}-${day}T${hour}:${minute}`;
         }
 
+        // ========== 核心修复：字节数组转字符串 + 解析ConfirmedDate ==========
+        // 辅助函数：将ASCII字节数组转换为字符串（跳过开头的字符集标识）
+        function byteArrayToString(byteArray) {
+            if (!Array.isArray(byteArray)) {
+                // 如果不是数组，直接返回原字符串（处理普通字符串情况）
+                return String(byteArray || '').trim();
+            }
+
+            let str = '';
+            // 遍历字节数组，转换为字符（跳过空字节\0）
+            for (let i = 0; i < byteArray.length; i++) {
+                const charCode = byteArray[i];
+                if (charCode === 0) continue; // 跳过空字节
+                str += String.fromCharCode(charCode);
+            }
+
+            // 移除开头的"ASCII"标识（如果有）
+            if (str.startsWith('ASCII')) {
+                str = str.substring(5).trim();
+            }
+
+            return str;
+        }
+
+        // 解析锁定状态：先转字符串，再匹配ConfirmedDate=1
+        function parseLockedStatusFromExif(userComment) {
+            // 步骤1：将字节数组/字符串转为可读字符串
+            const commentStr = byteArrayToString(userComment);
+
+            // 步骤2：宽松匹配ConfirmedDate=1
+            const isLocked = commentStr.includes('ConfirmedDate=1');
+
+            // 调试日志（可选）
+            console.log('原始UserComment:', userComment);
+            console.log('转换后字符串:', commentStr);
+            console.log('锁定状态:', isLocked);
+
+            return isLocked;
+        }
+        // ========== 解析函数修复结束 ==========
+
         function sortImagesBySelectedTime() {
             if (imageFiles.length === 0) {
                 alert('暂无图片可排序！');
@@ -499,14 +560,27 @@
                 img.onload = function() {
                     let originalRotation = 0;
                     let exifDateTimeOriginal = '';
+                    let isLocked = false; // 默认未锁定
 
                     try {
                         EXIF.getData(img, function() {
+                            // 读取旋转信息
                             const o = EXIF.getTag(this, 'Orientation') || 1;
                             originalRotation = EXIF_ORIENT_TO_DEG[o] || 0;
+                            // 读取拍摄时间
                             exifDateTimeOriginal = EXIF.getTag(this, 'DateTimeOriginal') || '';
+
+                            // 读取UserComment（兼容大小写）
+                            const userComment = EXIF.getTag(this, 'UserComment') ||
+                                                EXIF.getTag(this, 'USERCOMMENT') ||
+                                                '';
+
+                            // 解析锁定状态（适配字节数组）
+                            isLocked = parseLockedStatusFromExif(userComment);
                         });
-                    } catch (err) {}
+                    } catch (err) {
+                        console.error('读取EXIF失败:', err);
+                    }
 
                     const initSelectedTime = exifDateToLocalFormat(exifDateTimeOriginal);
 
@@ -516,7 +590,8 @@
                         userRotation: 0,
                         totalRotation: originalRotation,
                         src: e.target.result,
-                        selectedTime: initSelectedTime
+                        selectedTime: initSelectedTime,
+                        isLocked: isLocked // 正确赋值锁定状态
                     };
                     imageFiles.push(imgData);
                     renderSingleImage(imgData, imageFiles.length - 1);
@@ -529,10 +604,18 @@
         function renderSingleImage(imgData, index) {
             const imageItem = document.createElement('div');
             imageItem.className = 'image-item';
+            // 根据锁定状态添加暗黄色底色
+            if (imgData.isLocked) {
+                imageItem.classList.add('locked');
+                console.log(`图片${index+1} (${imgData.file.name})：初始化锁定`);
+            } else {
+                console.log(`图片${index+1} (${imgData.file.name})：初始化未锁定`);
+            }
             imageItem.dataset.index = index;
             imageItem.dataset.originalRotation = imgData.originalRotation;
             imageItem.dataset.userRotation = imgData.userRotation;
             imageItem.dataset.totalRotation = imgData.totalRotation;
+            imageItem.dataset.isLocked = imgData.isLocked;
 
             const imageWrapper = document.createElement('div');
             imageWrapper.className = 'image-wrapper';
@@ -570,6 +653,17 @@
                 rotateImage(imageItem, imageInner, 'clockwise');
             };
 
+            const lockBtn = document.createElement('button');
+            lockBtn.className = 'lock-btn';
+            lockBtn.textContent = imgData.isLocked ? '🔒' : '🔓';
+            if (imgData.isLocked) {
+                lockBtn.classList.add('locked');
+            }
+            lockBtn.onclick = (e) => {
+                e.stopPropagation();
+                toggleLockStatus(imageItem, lockBtn);
+            };
+
             const counterclockwiseBtn = document.createElement('button');
             counterclockwiseBtn.className = 'rotate-btn counterclockwise';
             counterclockwiseBtn.textContent = '↺';
@@ -578,8 +672,9 @@
                 rotateImage(imageItem, imageInner, 'counterclockwise');
             };
 
-            rotateBtnContainer.appendChild(clockwiseBtn);
             rotateBtnContainer.appendChild(counterclockwiseBtn);
+            rotateBtnContainer.appendChild(lockBtn);
+            rotateBtnContainer.appendChild(clockwiseBtn);
 
             const dateContainer = document.createElement('div');
             dateContainer.className = 'date-controls';
@@ -643,6 +738,27 @@
             imageItem.appendChild(controls);
 
             imageGrid.appendChild(imageItem);
+        }
+
+        function toggleLockStatus(imageItem, lockBtn) {
+            const isLocked = imageItem.dataset.isLocked === 'true';
+            const newLockedStatus = !isLocked;
+
+            if (newLockedStatus) {
+                imageItem.classList.add('locked');
+                lockBtn.classList.add('locked');
+                lockBtn.textContent = '🔒';
+            } else {
+                imageItem.classList.remove('locked');
+                lockBtn.classList.remove('locked');
+                lockBtn.textContent = '🔓';
+            }
+
+            imageItem.dataset.isLocked = newLockedStatus;
+            const index = parseInt(imageItem.dataset.index);
+            if (imageFiles[index]) {
+                imageFiles[index].isLocked = newLockedStatus;
+            }
         }
 
         function initSortable() {
@@ -736,7 +852,7 @@
             }
 
             let commands = [];
-            commands.push('# EXIFTool 指令（时间=原始选择值，仅添加+08:00时区参数）');
+            commands.push('# EXIFTool 指令（时间=原始选择值，仅添加+08:00时区参数，锁定状态写入ConfirmedDate标签）');
             commands.push(`cd "${selectedFolderPath || '你的图片路径'}"`);
             commands.push('');
 
@@ -750,8 +866,16 @@
                 const [hour, minute] = timePart.split(':');
                 const exifDate = `${year}-${month}-${day} ${hour}:${minute}:00`;
 
+                // 锁定=1时添加标签，未锁定时删除标签
+                let confirmedDateCmd = '';
+                if (img.isLocked) {
+                    confirmedDateCmd = `-UserComment="ConfirmedDate=1"`;
+                } else {
+                    confirmedDateCmd = `-UserComment=`;
+                }
+
                 const fn = img.file.name.replace(/'/g, "\\'");
-                const cmd = `exiftool -Orientation="${orient}" -DateTimeOriginal='${exifDate}' -CreateDate='${exifDate}' -ModifyDate='${exifDate}' -OffsetTimeOriginal='+08:00' -overwrite_original '${fn}'`;
+                const cmd = `exiftool -Orientation="${orient}" -DateTimeOriginal='${exifDate}' -CreateDate='${exifDate}' -ModifyDate='${exifDate}' -OffsetTimeOriginal='+08:00' ${confirmedDateCmd} -overwrite_original '${fn}'`;
                 commands.push(cmd);
             });
 
