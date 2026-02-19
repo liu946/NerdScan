@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>图片EXIF批量处理工具（纯原始时间+输出时区）</title>
+    <title>图片EXIF批量处理工具（放大预览+原始时间+CSS最短旋转）</title>
     <script src="https://cdn.jsdelivr.net/npm/exif-js@2.3.0/exif.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/sortablejs@1.15.0/Sortable.min.js"></script>
     <style>
@@ -132,6 +132,7 @@
             height: 100%;
             object-fit: cover;
             border-radius: 4px;
+            cursor: zoom-in; /* 鼠标悬浮显示放大图标 */
         }
 
         .rotation-degree {
@@ -305,6 +306,37 @@
             color: #999;
         }
 
+        /* ========== 放大预览：限制最大高度，不会超出屏幕 ========== */
+        .image-preview {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100vw;
+            height: 100vh;
+            background-color: rgba(0, 0, 0, 0.9);
+            z-index: 9999;
+            display: none;
+            justify-content: center;
+            align-items: center;
+            cursor: zoom-out;
+        }
+
+        .preview-content {
+            max-width: 95vw;
+            max-height: 95vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+
+        .preview-img {
+            max-width: 100%;
+            max-height: 90vh; /* 核心：限制最大高度为屏幕的90% */
+            object-fit: contain;
+            border-radius: 8px;
+        }
+        /* ====================================================== */
+
         @media (max-width: 768px) {
             .image-grid {
                 grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
@@ -323,14 +355,14 @@
 <body>
     <div class="container">
         <div class="upload-area">
-            <h2>图片EXIF批量处理工具（原始时间+输出时区）</h2>
+            <h2>图片EXIF批量处理工具（放大预览+原始时间）</h2>
             <br>
             <div class="upload-btn-group">
                 <button class="upload-btn" onclick="document.getElementById('folder-input').click()">选择图片文件夹</button>
                 <button class="sort-btn" onclick="sortImagesBySelectedTime()" id="sort-btn" disabled>按选择的时间重新排序</button>
             </div>
             <input type="file" id="folder-input" webkitdirectory directory multiple hidden accept="image/*">
-            <p>提示：时间全程无时区换算，仅输出指令时添加时区参数（+08:00）</p>
+            <p>提示：1. 点击图片可放大预览，再次点击关闭；2. 时间全程无时区换算，仅输出指令时添加时区参数（+08:00）</p>
             <div class="folder-path" id="folder-path" style="display: none;">所选文件夹：<span id="path-text"></span></div>
         </div>
 
@@ -350,6 +382,13 @@
         </div>
     </div>
 
+    <!-- 放大预览窗口 -->
+    <div class="image-preview" id="image-preview" onclick="closeImagePreview()">
+        <div class="preview-content">
+            <img src="" alt="预览图片" class="preview-img" id="preview-img">
+        </div>
+    </div>
+
     <script>
         let imageFiles = [];
         let selectedFolderPath = '';
@@ -358,6 +397,8 @@
         const folderPathEl = document.getElementById('folder-path');
         const pathTextEl = document.getElementById('path-text');
         const sortBtn = document.getElementById('sort-btn');
+        const imagePreview = document.getElementById('image-preview');
+        const previewImg = document.getElementById('preview-img');
 
         const EXIF_ORIENT_TO_DEG = {
             1: 0, 2: 0, 3: 180, 4: 180, 5: 90, 6: 90, 7: 270, 8: 270
@@ -400,11 +441,8 @@
             setTimeout(initSortable, 500);
         }
 
-        // 核心1：EXIF时间转控件格式，仅格式转换，无时区换算
         function exifDateToLocalFormat(exifDateStr) {
             if (!exifDateStr) return getCurrentTimeForInput();
-
-            // EXIF格式：2024:12:31 23:59:59 → 控件格式：2024-12-31T23:59
             try {
                 const [datePart, timePart] = exifDateStr.split(' ');
                 const [year, month, day] = datePart.split(':');
@@ -415,10 +453,8 @@
             }
         }
 
-        // 核心2：获取当前时间给控件，仅格式处理，无时区换算
         function getCurrentTimeForInput() {
             const now = new Date();
-            // 直接取本地时间的年/月/日/时/分，不做任何时区偏移
             const year = now.getFullYear();
             const month = String(now.getMonth() + 1).padStart(2, '0');
             const day = String(now.getDate()).padStart(2, '0');
@@ -434,7 +470,6 @@
             }
 
             imageFiles.sort((a, b) => {
-                // 核心3：排序时直接解析控件原始时间，无时区换算
                 const tA = parseInputTimeToMs(a.selectedTime);
                 const tB = parseInputTimeToMs(b.selectedTime);
                 return tA - tB;
@@ -449,13 +484,10 @@
             alert('已按选择的时间重新排序图片！');
         }
 
-        // 核心4：解析控件时间为毫秒，仅格式转换，无时区换算
         function parseInputTimeToMs(inputValue) {
             if (!inputValue) return 0;
-            // 控件格式：2024-12-31T23:59 → 拼接为 2024-12-31 23:59:00
             const [datePart, timePart] = inputValue.split('T');
             const fullTimeStr = `${datePart} ${timePart}:00`;
-            // 直接创建Date对象，使用控件的原始时间值
             return new Date(fullTimeStr).getTime();
         }
 
@@ -476,7 +508,6 @@
                         });
                     } catch (err) {}
 
-                    // 初始时间：EXIF时间转控件格式（无时区换算）
                     const initSelectedTime = exifDateToLocalFormat(exifDateTimeOriginal);
 
                     const imgData = {
@@ -485,7 +516,7 @@
                         userRotation: 0,
                         totalRotation: originalRotation,
                         src: e.target.result,
-                        selectedTime: initSelectedTime // 保存控件原始时间，无换算
+                        selectedTime: initSelectedTime
                     };
                     imageFiles.push(imgData);
                     renderSingleImage(imgData, imageFiles.length - 1);
@@ -512,6 +543,10 @@
 
             const img = document.createElement('img');
             img.src = imgData.src;
+            img.onclick = function(e) {
+                e.stopPropagation();
+                openImagePreview(imgData.src);
+            };
             imageInner.appendChild(img);
 
             const rotationDegree = document.createElement('div');
@@ -552,13 +587,12 @@
             const dateInput = document.createElement('input');
             dateInput.type = 'datetime-local';
             dateInput.className = 'date-input';
-            dateInput.value = imgData.selectedTime; // 直接赋值原始时间，无换算
+            dateInput.value = imgData.selectedTime;
 
-            // 核心5：时间变更时，直接保存控件原始值
             dateInput.addEventListener('change', function() {
                 const i = parseInt(this.closest('.image-item').dataset.index);
                 if (imageFiles[i]) {
-                    imageFiles[i].selectedTime = this.value; // 保存原始值，无换算
+                    imageFiles[i].selectedTime = this.value;
                 }
             });
 
@@ -628,7 +662,6 @@
             });
         }
 
-        // CSS 最短路径旋转逻辑
         function rotateImage(itemEl, imageInner, dir) {
             let userRot = parseInt(itemEl.dataset.userRotation);
             const originalRot = parseInt(itemEl.dataset.originalRotation);
@@ -653,29 +686,25 @@
             }
         }
 
-        // 核心6：快捷按钮时间计算，基于原始时间，无时区换算
         function setEqualPrevTime(i) {
             if (i === 0) return;
             const prev = imageFiles[i - 1];
             const curr = imageFiles[i];
             if (!prev || !curr) return;
-            curr.selectedTime = prev.selectedTime; // 直接复制原始值
+            curr.selectedTime = prev.selectedTime;
             document.querySelector(`.image-item[data-index="${i}"] .date-input`).value = prev.selectedTime;
         }
 
-        // 核心7：时间增减，基于原始时间，无时区换算
         function addTimeFromPrev(i, unit) {
             if (i === 0) return;
             const prev = imageFiles[i - 1];
             const curr = imageFiles[i];
             if (!prev || !curr || !prev.selectedTime) return;
 
-            // 解析前一张的原始时间，无时区换算
             const [datePart, timePart] = prev.selectedTime.split('T');
             const fullTimeStr = `${datePart} ${timePart}:00`;
-            const prevDate = new Date(fullTimeStr); // 直接用原始时间创建Date
+            const prevDate = new Date(fullTimeStr);
 
-            // 时间增减，基于原始时间
             const newDate = new Date(prevDate);
             switch(unit) {
                 case 'minute':
@@ -689,7 +718,6 @@
                     break;
             }
 
-            // 转换回控件格式，无时区换算
             const year = newDate.getFullYear();
             const month = String(newDate.getMonth() + 1).padStart(2, '0');
             const day = String(newDate.getDate()).padStart(2, '0');
@@ -697,12 +725,10 @@
             const minute = String(newDate.getMinutes()).padStart(2, '0');
             const newTimeStr = `${year}-${month}-${day}T${hour}:${minute}`;
 
-            // 保存原始值
             curr.selectedTime = newTimeStr;
             document.querySelector(`.image-item[data-index="${i}"] .date-input`).value = newTimeStr;
         }
 
-        // 核心8：生成指令时，仅添加时区参数，时间值不变
         function generateExifCommands() {
             if (imageFiles.length === 0) {
                 alert('请先选择图片文件夹！');
@@ -715,20 +741,16 @@
             commands.push('');
 
             imageFiles.forEach(img => {
-                // 旋转角度处理
                 const rot = (img.totalRotation) % 360;
                 const finalRot = rot < 0 ? rot + 360 : rot;
                 const orient = DEG_TO_ORIENT_STR[finalRot] || 'Rotate 0';
 
-                // 核心：解析原始时间，不做任何时区换算
                 const [datePart, timePart] = img.selectedTime.split('T');
                 const [year, month, day] = datePart.split('-');
                 const [hour, minute] = timePart.split(':');
-                // 时间值完全使用控件原始值，无±8小时
                 const exifDate = `${year}-${month}-${day} ${hour}:${minute}:00`;
 
                 const fn = img.file.name.replace(/'/g, "\\'");
-                // 仅在这里添加时区参数（OffsetTimeOriginal='+08:00'），时间值不变
                 const cmd = `exiftool -Orientation="${orient}" -DateTimeOriginal='${exifDate}' -CreateDate='${exifDate}' -ModifyDate='${exifDate}' -OffsetTimeOriginal='+08:00' -overwrite_original '${fn}'`;
                 commands.push(cmd);
             });
@@ -740,6 +762,18 @@
             const t = document.getElementById('commands-text');
             if (!t.value) { alert('请先生成指令！'); return; }
             navigator.clipboard.writeText(t.value).then(() => alert('指令已复制到剪贴板！'));
+        }
+
+        function openImagePreview(imgSrc) {
+            previewImg.src = imgSrc;
+            imagePreview.style.display = 'flex';
+            document.body.style.overflow = 'hidden';
+        }
+
+        function closeImagePreview() {
+            imagePreview.style.display = 'none';
+            previewImg.src = '';
+            document.body.style.overflow = 'auto';
         }
     </script>
 </body>
