@@ -97,9 +97,9 @@ class PhotoDetector:
     def add_border(self, image, border_size=100):
         new_width = image.width + 2 * border_size
         new_height = image.height + 2 * border_size
-        bordered_image = Image.new('RGB', (new_width, new_height), 'white')
+        bordered_image = Image.new('RGB', (new_width, new_height), 'black')
         bordered_image.paste(image, (border_size, border_size))
-        logger.info(f"Added {border_size}px white border. New size: {image.size[0]}x{image.size[1]}")
+        logger.info(f"Added {border_size}px black border. New size: {image.size[0]}x{image.size[1]}")
         return bordered_image
     
     def detect_photos(self, image, text_prompt="a photo. a picture.",
@@ -163,9 +163,15 @@ class PhotoDetector:
         
         logger.info(f"{EMOJI_SUCCESS} Found {len(boxes)} potential photos")
         for i, (box, score, label) in enumerate(zip(boxes, scores, labels)):
-            logger.info(f"  Photo {i+1}: {label} (Score: [bold green]{score:.4f}[/bold green]), Box: {box}")
+            logger.info(f"  Photo {i+1}: {label} (Score: [bold green]{score:.4f}[/bold green]), Box: {box}, whr: {self.get_box_wh_ratio(box):.4f}")
         
         return image, boxes, scores, labels
+
+    def get_box_wh_ratio(self, box):
+        l1, l2 = (box[2] - box[0]), (box[3] - box[1])
+        if l1 > l2:
+            return l1/l2
+        return l2/l1
     
     def calculate_overlap_percentage(self, box1, box2):
         """
@@ -329,7 +335,7 @@ class PhotoDetector:
             for i, (output_path, score, label) in enumerate(zip(output_paths, scores, labels)):
                 cropped_img = Image.open(output_path)
                 axs[i+1].imshow(cropped_img)
-                axs[i+1].set_title(f'Crop {i+1}: {label} ({score:.2f})')
+                axs[i+1].set_title(f'Crop {i+1}: {label} ({score:.4f})')
                 axs[i+1].set_xticks([])
                 axs[i+1].set_yticks([])
         else:
@@ -425,7 +431,7 @@ def process_images(detector, input_dir, output_dir, vis_dir, text_prompt,
                    preserve_structure=False, remove_overlaps=False,
                    overlap_threshold=0.05, confidence_threshold=0.15,
                    file_name_filter=None,
-                   sample_size=None, seed=42, auto_orient=False, rotate_pixels=False, add_border=True):
+                   sample_size=None, seed=42, auto_orient=False, rotate_pixels=False, add_border=True, fix=None):
     """
     Process all images in the input directory and save results.
     
@@ -472,8 +478,8 @@ def process_images(detector, input_dir, output_dir, vis_dir, text_prompt,
                     l, ext = os.path.splitext(filename)
                     if l.endswith('_alt'):  # 修改的直接跳过，实际会被原始图片调用到。
                         continue
-                    if file_name_filter is not None:
-                        if not any(f in l for f in file_name_filter):
+                    if file_name_filter is not None and len(file_name_filter):
+                        if not any(l.endswith(f) for f in file_name_filter):
                             continue
                     full_path = os.path.join(root, filename)
                     all_image_files.append(full_path)
@@ -547,6 +553,14 @@ def process_images(detector, input_dir, output_dir, vis_dir, text_prompt,
             
             if image is None or len(boxes) == 0:
                 continue
+
+            if fix:
+                for fix_string in fix.split(';'):
+                    i_s, t = fix_string.split(':')
+                    index = [int(i) for i in i_s.split('.')]
+                    v = float(t)
+                    boxes[index[0] - 1][index[1]] = v
+                    logger.info(f"Fixed box {index[0]}.{index[1]} with value {v}, Box: {boxes[index[0] - 1]}")
             
             # Remove overlapping boxes if requested
             if remove_overlaps and len(boxes) > 1:
@@ -755,6 +769,11 @@ def main():
         help="filter name in file."
     )
     parser.add_argument(
+        "--fix",
+        type=str, default=None,
+        help="fix with pic_index.index:value;;pic_index.index:value;..."
+    )
+    parser.add_argument(
         "--preserve-structure", action="store_true", 
         help="Preserve folder structure from input to output. Default is flat structure."
     )
@@ -842,7 +861,8 @@ def main():
         seed=args.seed,
         auto_orient=args.auto_orient,
         rotate_pixels=args.rotate_pixels,
-        add_border=args.add_border
+        add_border=args.add_border,
+        fix=args.fix,
     )
 
 

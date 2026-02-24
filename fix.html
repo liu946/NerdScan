@@ -382,6 +382,13 @@
                 <button class="upload-btn" onclick="document.getElementById('folder-input').click()">选择图片文件夹</button>
                 <button class="sort-btn" onclick="sortImagesBySelectedTime()" id="sort-btn" disabled>按选择的时间重新排序</button>
             </div>
+            <div class="upload-btn-group">
+                <input type="text" id="api-root-path" class="date-input" placeholder="/path/to/root" style="max-width: 300px;" value="/Users/liu/Documents/扫描/处理/2026-02-16扫描老照片">
+                <input type="datetime-local" id="api-start-time" class="date-input" style="max-width: 220px;" value="1990-01-01T00:00">
+                <span style="align-self: center;">至</span>
+                <input type="datetime-local" id="api-end-time" class="date-input" style="max-width: 220px;" value="1997-01-01T00:00">
+                <button class="upload-btn" onclick="loadFromApi()">从API加载 crops</button>
+            </div>
             <input type="file" id="folder-input" webkitdirectory directory multiple hidden accept="image/*">
             <p>提示：1. 点击图片可放大预览，再次点击关闭；2. 时间全程无时区换算，仅输出指令时添加时区参数（+08:00）；3. 锁定状态写入EXIF的ConfirmedDate标签（1=锁定，未锁定则删除该标签）</p>
             <div class="folder-path" id="folder-path" style="display: none;">所选文件夹：<span id="path-text"></span></div>
@@ -419,6 +426,9 @@
         const sortBtn = document.getElementById('sort-btn');
         const imagePreview = document.getElementById('image-preview');
         const previewImg = document.getElementById('preview-img');
+        const apiRootPathInput = document.getElementById('api-root-path');
+        const apiStartTimeInput = document.getElementById('api-start-time');
+        const apiEndTimeInput = document.getElementById('api-end-time');
 
         const EXIF_ORIENT_TO_DEG = {
             1: 0, 2: 0, 3: 180, 4: 180, 5: 90, 6: 90, 7: 270, 8: 270
@@ -432,6 +442,99 @@
         };
 
         folderInput.addEventListener('change', handleFolderSelect);
+
+        // ========== API加载逻辑 ==========
+        async function loadFromApi() {
+            const rootPath = apiRootPathInput?.value?.trim();
+            const startTime = apiStartTimeInput?.value;
+            const endTime = apiEndTimeInput?.value;
+
+            if (!rootPath) { alert('请输入根目录路径'); return; }
+            if (!startTime || !endTime) { alert('请选择开始与结束时间'); return; }
+            if (startTime > endTime) { alert('开始时间不能晚于结束时间'); return; }
+
+            try {
+                imageGrid.innerHTML = '<div class="empty-state">正在加载...</div>';
+                
+                const response = await fetch('/api/scan-crops', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        rootPath: rootPath,
+                        startTime: startTime,
+                        endTime: endTime
+                    })
+                });
+
+                if (!response.ok) {
+                    const errData = await response.json();
+                    alert(`API错误: ${errData.message || '未知错误'}`);
+                    imageGrid.innerHTML = '<div class="empty-state">加载失败</div>';
+                    return;
+                }
+
+                const result = await response.json();
+                if (!result.success) {
+                    alert(`加载失败: ${result.message}`);
+                    imageGrid.innerHTML = '<div class="empty-state">加载失败</div>';
+                    return;
+                }
+
+                const images = result.data || [];
+                if (images.length === 0) {
+                    imageGrid.innerHTML = '<div class="empty-state">指定时间段内未找到图片</div>';
+                    sortBtn.disabled = true;
+                    return;
+                }
+
+                // 清空并加载图片
+                imageFiles = [];
+                imageGrid.innerHTML = '';
+                selectedFolderPath = rootPath;
+                folderPathEl.style.display = 'block';
+                pathTextEl.textContent = rootPath;
+                sortBtn.disabled = false;
+
+                images.forEach((imgData, index) => {
+                    processApiImage(imgData, index);
+                });
+
+                setTimeout(initSortable, 500);
+                alert(`成功加载 ${images.length} 张图片`);
+            } catch (err) {
+                alert(`API调用失败: ${err.message}`);
+                imageGrid.innerHTML = '<div class="empty-state">加载失败</div>';
+            }
+        }
+
+        function processApiImage(apiData, index) {
+            // apiData: { filename, relPath, base64, exif, isLocked }
+            const exif = apiData.exif || {};
+            const exifDateTimeOriginal = exif.DateTimeOriginal || '';
+            const orientation = exif.Orientation || 1;
+            const isLocked = apiData.isLocked || false;
+
+            const EXIF_ORIENT_TO_DEG = {
+                1: 0, 2: 0, 3: 180, 4: 180, 5: 90, 6: 90, 7: 270, 8: 270
+            };
+            const originalRotation = EXIF_ORIENT_TO_DEG[orientation] || 0;
+            const initSelectedTime = exifDateToLocalFormat(exifDateTimeOriginal);
+            const src = `data:image/jpeg;base64,${apiData.base64}`;
+
+            const imgData = {
+                file: { name: apiData.filename },
+                originalRotation: originalRotation,
+                userRotation: 0,
+                totalRotation: originalRotation,
+                src: src,
+                selectedTime: initSelectedTime,
+                isLocked: isLocked,
+                relPath: apiData.relPath
+            };
+            imageFiles.push(imgData);
+            renderSingleImage(imgData, imageFiles.length - 1);
+        }
+        // ========== API加载逻辑结束 ==========
 
         function handleFolderSelect(e) {
             const files = Array.from(e.target.files);
@@ -874,7 +977,7 @@
                     confirmedDateCmd = `-UserComment=`;
                 }
 
-                const fn = img.file.name.replace(/'/g, "\\'");
+                const fn = (img.relPath || img.file.name).replace(/'/g, "\\'");
                 const cmd = `exiftool -Orientation="${orient}" -DateTimeOriginal='${exifDate}' -CreateDate='${exifDate}' -ModifyDate='${exifDate}' -OffsetTimeOriginal='+08:00' ${confirmedDateCmd} -overwrite_original '${fn}'`;
                 commands.push(cmd);
             });
